@@ -322,6 +322,15 @@ export default function App() {
                 <h1>{activeGroup.app_name}</h1>
                 <span>{activeGroup.exe_path}</span>
               </div>
+              <div className="preview-stage">
+                {activeWindow?.thumbnail ? (
+                  <img className="preview-image" src={activeWindow.thumbnail} alt="" />
+                ) : (
+                  <div className="preview-fallback">
+                    <div className="preview-icon">{initials(activeWindow?.process_name ?? activeGroup.app_name)}</div>
+                  </div>
+                )}
+              </div>
               <div className="window-list">
                 {activeGroup.windows.map((window, windowIndex) => (
                   <button
@@ -331,7 +340,11 @@ export default function App() {
                     onMouseEnter={() => applySelection({ group: selectedGroup, window: windowIndex })}
                     onClick={() => void activateWindowByHwnd(window.hwnd)}
                   >
-                    <div className="window-icon">{initials(window.process_name)}</div>
+                    {window.thumbnail ? (
+                      <img className="window-preview" src={window.thumbnail} alt="" />
+                    ) : (
+                      <div className="window-icon">{initials(window.process_name)}</div>
+                    )}
                     <div className="window-copy">
                       <span className="window-title">{window.title}</span>
                       <span className="window-meta">

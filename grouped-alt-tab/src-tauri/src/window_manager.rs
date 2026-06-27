@@ -1,18 +1,27 @@
 use anyhow::{anyhow, Context};
+use base64::{engine::general_purpose, Engine as _};
+use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 use serde::Serialize;
 use std::{collections::BTreeMap, ffi::c_void};
 use tauri::{AppHandle, Manager};
 use windows::Win32::{
-        Foundation::{BOOL, CloseHandle, HWND, LPARAM, MAX_PATH},
+        Foundation::{BOOL, CloseHandle, HWND, LPARAM, MAX_PATH, RECT},
+        Graphics::Gdi::{
+            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits,
+            GetWindowDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+            DIB_RGB_COLORS, HBITMAP, HGDIOBJ, SRCCOPY,
+        },
+        Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
         System::{
             ProcessStatus::K32GetModuleFileNameExW,
             Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ},
         },
         UI::WindowsAndMessaging::{
             EnumWindows, GetAncestor, GetLastActivePopup, GetWindow, GetWindowLongW,
-            GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-            IsWindowVisible, SetForegroundWindow, ShowWindow, GWL_EXSTYLE, GA_ROOTOWNER,
-            GW_OWNER, SW_RESTORE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+            GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+            IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GWL_EXSTYLE,
+            GA_ROOTOWNER, GW_OWNER, PW_RENDERFULLCONTENT, SW_RESTORE, WS_EX_APPWINDOW,
+            WS_EX_TOOLWINDOW,
         },
 };
 
@@ -24,6 +33,7 @@ pub struct WindowInfo {
     pub process_name: String,
     pub exe_path: String,
     pub icon: Option<String>,
+    pub thumbnail: Option<String>,
     pub is_minimized: bool,
     pub last_active_rank: usize,
 }
@@ -150,9 +160,106 @@ unsafe fn inspect_window(hwnd: HWND, ctx: &EnumContext) -> Option<WindowInfo> {
         process_name,
         exe_path,
         icon: None,
+        thumbnail: capture_window_thumbnail(hwnd).ok(),
         is_minimized: IsIconic(hwnd).as_bool(),
         last_active_rank: ctx.windows.len(),
     })
+}
+
+unsafe fn capture_window_thumbnail(hwnd: HWND) -> anyhow::Result<String> {
+    let mut rect = RECT::default();
+    GetWindowRect(hwnd, &mut rect).context("failed to read window rect")?;
+
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    if width <= 0 || height <= 0 || width > 10_000 || height > 10_000 {
+        return Err(anyhow!("window size is not capturable"));
+    }
+
+    let window_dc = GetWindowDC(hwnd);
+    if window_dc.0.is_null() {
+        return Err(anyhow!("failed to get window device context"));
+    }
+
+    let mem_dc = CreateCompatibleDC(window_dc);
+    if mem_dc.0.is_null() {
+        ReleaseDC(hwnd, window_dc);
+        return Err(anyhow!("failed to create compatible device context"));
+    }
+
+    let bitmap = CreateCompatibleBitmap(window_dc, width, height);
+    if bitmap.0.is_null() {
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(hwnd, window_dc);
+        return Err(anyhow!("failed to create compatible bitmap"));
+    }
+
+    let old_object = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
+    let printed = PrintWindow(hwnd, mem_dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)).as_bool();
+    if !printed {
+        let _ = BitBlt(mem_dc, 0, 0, width, height, window_dc, 0, 0, SRCCOPY);
+    }
+
+    let result = bitmap_to_png_data_url(window_dc, bitmap, width, height);
+
+    SelectObject(mem_dc, old_object);
+    let _ = DeleteObject(HGDIOBJ(bitmap.0));
+    let _ = DeleteDC(mem_dc);
+    ReleaseDC(hwnd, window_dc);
+
+    result
+}
+
+unsafe fn bitmap_to_png_data_url(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    bitmap: HBITMAP,
+    width: i32,
+    height: i32,
+) -> anyhow::Result<String> {
+    let mut info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut bgra = vec![0u8; (width * height * 4) as usize];
+    let lines = GetDIBits(
+        hdc,
+        bitmap,
+        0,
+        height as u32,
+        Some(bgra.as_mut_ptr() as *mut c_void),
+        &mut info,
+        DIB_RGB_COLORS,
+    );
+    if lines == 0 {
+        return Err(anyhow!("failed to read bitmap pixels"));
+    }
+
+    let mut rgba = Vec::with_capacity(bgra.len());
+    for pixel in bgra.chunks_exact(4) {
+        rgba.push(pixel[2]);
+        rgba.push(pixel[1]);
+        rgba.push(pixel[0]);
+        rgba.push(255);
+    }
+
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png)
+        .write_image(&rgba, width as u32, height as u32, ColorType::Rgba8.into())
+        .context("failed to encode window thumbnail")?;
+
+    Ok(format!(
+        "data:image/png;base64,{}",
+        general_purpose::STANDARD.encode(png)
+    ))
 }
 
 unsafe fn is_switchable_window(hwnd: HWND) -> bool {
@@ -241,6 +348,7 @@ mod tests {
             process_name: process_name.to_string(),
             exe_path: exe_path.to_string(),
             icon: None,
+            thumbnail: None,
             is_minimized: false,
             last_active_rank: 0,
         }

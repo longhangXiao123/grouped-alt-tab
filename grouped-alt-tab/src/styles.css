@@ -178,6 +178,16 @@ input {
   font-size: 12px;
 }
 
+.window-preview {
+  width: 92px;
+  height: 54px;
+  display: block;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.24);
+}
+
 .group-copy,
 .window-copy {
   min-width: 0;
@@ -223,15 +233,51 @@ input {
   display: block;
 }
 
+.preview-stage {
+  height: 210px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(2, 6, 12, 0.36);
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.preview-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.preview-icon {
+  width: 78px;
+  height: 78px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #78d2bd;
+  color: #15222b;
+  font-size: 22px;
+  font-weight: 760;
+}
+
 .window-list {
   display: grid;
   gap: 8px;
 }
 
 .window-row {
-  min-height: 68px;
+  min-height: 78px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 92px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   padding: 11px;

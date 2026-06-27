@@ -5,6 +5,7 @@ export type WindowInfo = {
   process_name: string;
   exe_path: string;
   icon: string | null;
+  thumbnail: string | null;
   is_minimized: boolean;
   last_active_rank: number;
 };

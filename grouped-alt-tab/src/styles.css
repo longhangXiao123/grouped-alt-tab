@@ -1,0 +1,258 @@
+:root {
+  color: #eef3f7;
+  background: transparent;
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 720px;
+  min-height: 460px;
+  background: rgba(18, 24, 31, 0.92);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(135deg, rgba(37, 48, 61, 0.96), rgba(17, 22, 29, 0.98)),
+    #151c24;
+}
+
+.toolbar {
+  height: 56px;
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) 36px 36px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.brand,
+.search,
+.icon-button {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.brand {
+  gap: 8px;
+  color: #f7fbff;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.search {
+  gap: 8px;
+  min-width: 0;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #bfd0dd;
+}
+
+.search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: #f6fbff;
+  background: transparent;
+}
+
+.search input::placeholder {
+  color: #91a4b3;
+}
+
+.icon-button {
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  color: #d6e2ea;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.error {
+  margin: 10px 14px 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(251, 113, 133, 0.45);
+  border-radius: 6px;
+  color: #fecdd3;
+  background: rgba(127, 29, 29, 0.34);
+}
+
+.content {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+}
+
+.groups,
+.windows {
+  min-height: 0;
+  overflow: auto;
+}
+
+.groups {
+  padding: 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.group,
+.window-row {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.group {
+  height: 58px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px;
+  text-align: left;
+}
+
+.group:hover,
+.window-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.group.selected,
+.window-row.selected {
+  border-color: rgba(125, 211, 252, 0.54);
+  background: rgba(14, 116, 144, 0.32);
+}
+
+.app-icon,
+.window-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: #f5b841;
+  color: #1c2730;
+  font-weight: 760;
+}
+
+.app-icon {
+  width: 38px;
+  height: 38px;
+  font-size: 13px;
+}
+
+.window-icon {
+  width: 44px;
+  height: 44px;
+  background: #78d2bd;
+  font-size: 12px;
+}
+
+.group-copy,
+.window-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.group-name,
+.window-title {
+  overflow: hidden;
+  color: #f4f8fb;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-count,
+.window-meta,
+.active-heading span {
+  overflow: hidden;
+  color: #9fb1bf;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.windows {
+  padding: 16px;
+}
+
+.active-heading {
+  margin-bottom: 14px;
+}
+
+.active-heading h1 {
+  margin: 0 0 5px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.active-heading span {
+  display: block;
+}
+
+.window-list {
+  display: grid;
+  gap: 8px;
+}
+
+.window-row {
+  min-height: 68px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 11px;
+  text-align: left;
+}
+
+.empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  color: #a9bac7;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

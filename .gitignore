@@ -1,0 +1,5 @@
+grouped-alt-tab/node_modules/
+grouped-alt-tab/dist/
+grouped-alt-tab/src-tauri/target/
+grouped-alt-tab/src-tauri/gen/
+*.log

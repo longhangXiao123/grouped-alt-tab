@@ -22,5 +22,8 @@ export type SwitcherSettings = {
   hotkey: string;
   group_by: "exe_path";
   preview_mode: "icons" | "thumbnails";
+  window_mode: "fullscreen" | "custom";
+  window_width: number;
+  window_height: number;
   excluded_processes: string[];
 };

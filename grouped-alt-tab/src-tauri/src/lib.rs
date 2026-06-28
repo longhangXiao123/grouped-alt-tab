@@ -5,10 +5,10 @@ use settings::{load_settings, save_settings, SwitcherSettings};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use window_manager::{activate_hwnd, list_groups, AppGroup};
+use window_manager::{activate_hwnd, cover_monitor, list_groups, AppGroup};
 
 #[derive(Debug, thiserror::Error)]
 enum AppError {
@@ -53,6 +53,49 @@ fn update_settings(app: AppHandle, settings: SwitcherSettings) -> AppResult<()> 
     save_settings(&app, &settings).map_err(AppError::from)
 }
 
+fn show_switcher_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+
+    let _ = window.show();
+
+    if let Err(error) = apply_window_bounds(app, &window) {
+        let _ = app.emit("window:error", error.to_string());
+    }
+
+    let _ = window.set_focus();
+}
+
+fn apply_window_bounds(app: &AppHandle, window: &WebviewWindow) -> anyhow::Result<()> {
+    let settings = load_settings(app)?;
+    if settings.window_mode != "custom" {
+        cover_monitor(window)?;
+        return Ok(());
+    }
+
+    let monitor = window
+        .current_monitor()?
+        .or(window.primary_monitor()?)
+        .ok_or_else(|| anyhow::anyhow!("no monitor available"))?;
+
+    let monitor_position = *monitor.position();
+    let monitor_size = *monitor.size();
+    let size = PhysicalSize::new(
+        settings.window_width.clamp(720, 7680),
+        settings.window_height.clamp(460, 4320),
+    );
+    let x_offset = (monitor_size.width.saturating_sub(size.width) / 2) as i32;
+    let y_offset = (monitor_size.height.saturating_sub(size.height) / 2) as i32;
+    let position =
+        PhysicalPosition::new(monitor_position.x + x_offset, monitor_position.y + y_offset);
+
+    window.set_position(position)?;
+    window.set_size(size)?;
+
+    Ok(())
+}
+
 pub fn run() {
     let handler_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
     let register_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
@@ -67,10 +110,7 @@ pub fn run() {
                         return;
                     }
 
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    show_switcher_window(app);
 
                     let _ = app.emit("switcher:cycle", ());
                 })
@@ -78,10 +118,7 @@ pub fn run() {
         )
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_switcher_window(app);
                 let _ = app.emit("switcher:open", ());
             }
             "quit" => {
@@ -125,10 +162,7 @@ pub fn run() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        show_switcher_window(app);
                         let _ = app.emit("switcher:open", ());
                     }
                 })

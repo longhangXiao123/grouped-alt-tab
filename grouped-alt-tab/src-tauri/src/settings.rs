@@ -8,7 +8,25 @@ pub struct SwitcherSettings {
     pub hotkey: String,
     pub group_by: String,
     pub preview_mode: String,
+    #[serde(default = "default_window_mode")]
+    pub window_mode: String,
+    #[serde(default = "default_window_width")]
+    pub window_width: u32,
+    #[serde(default = "default_window_height")]
+    pub window_height: u32,
     pub excluded_processes: Vec<String>,
+}
+
+fn default_window_mode() -> String {
+    "fullscreen".to_string()
+}
+
+fn default_window_width() -> u32 {
+    1280
+}
+
+fn default_window_height() -> u32 {
+    720
 }
 
 impl Default for SwitcherSettings {
@@ -17,6 +35,9 @@ impl Default for SwitcherSettings {
             hotkey: "Alt+`".to_string(),
             group_by: "exe_path".to_string(),
             preview_mode: "icons".to_string(),
+            window_mode: default_window_mode(),
+            window_width: default_window_width(),
+            window_height: default_window_height(),
             excluded_processes: vec![
                 "grouped-alt-tab.exe".to_string(),
                 "ApplicationFrameHost.exe".to_string(),
@@ -40,7 +61,8 @@ pub fn load_settings(app: &AppHandle) -> anyhow::Result<SwitcherSettings> {
         return Ok(SwitcherSettings::default());
     }
 
-    let raw = fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let raw =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))
 }
 
@@ -60,6 +82,11 @@ mod tests {
         assert_eq!(settings.hotkey, "Alt+`");
         assert_eq!(settings.group_by, "exe_path");
         assert_eq!(settings.preview_mode, "icons");
-        assert!(settings.excluded_processes.contains(&"grouped-alt-tab.exe".to_string()));
+        assert_eq!(settings.window_mode, "fullscreen");
+        assert_eq!(settings.window_width, 1280);
+        assert_eq!(settings.window_height, 720);
+        assert!(settings
+            .excluded_processes
+            .contains(&"grouped-alt-tab.exe".to_string()));
     }
 }

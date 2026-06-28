@@ -15,12 +15,12 @@
       {
         "title": "Grouped Alt-Tab",
         "label": "main",
-        "width": 860,
-        "height": 520,
+        "width": 1920,
+        "height": 1080,
         "center": true,
         "decorations": false,
         "transparent": true,
-        "resizable": false,
+        "resizable": true,
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true

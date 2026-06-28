@@ -3,26 +3,27 @@ use base64::{engine::general_purpose, Engine as _};
 use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 use serde::Serialize;
 use std::{collections::BTreeMap, ffi::c_void};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 use windows::Win32::{
-        Foundation::{BOOL, CloseHandle, HWND, LPARAM, MAX_PATH, RECT},
-        Graphics::Gdi::{
-            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits,
-            GetWindowDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-            DIB_RGB_COLORS, HBITMAP, HGDIOBJ, SRCCOPY,
-        },
-        Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
-        System::{
-            ProcessStatus::K32GetModuleFileNameExW,
-            Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ},
-        },
-        UI::WindowsAndMessaging::{
-            EnumWindows, GetAncestor, GetLastActivePopup, GetWindow, GetWindowLongW,
-            GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-            IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GWL_EXSTYLE,
-            GA_ROOTOWNER, GW_OWNER, PW_RENDERFULLCONTENT, SW_RESTORE, WS_EX_APPWINDOW,
-            WS_EX_TOOLWINDOW,
-        },
+    Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, RECT},
+    Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits,
+        GetMonitorInfoW, GetWindowDC, MonitorFromWindow, ReleaseDC, SelectObject, BITMAPINFO,
+        BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST, SRCCOPY,
+    },
+    Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
+    System::{
+        ProcessStatus::K32GetModuleFileNameExW,
+        Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ},
+    },
+    UI::WindowsAndMessaging::{
+        EnumWindows, GetAncestor, GetLastActivePopup, GetWindow, GetWindowLongW, GetWindowRect,
+        GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        SetForegroundWindow, SetWindowPos, ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER,
+        HWND_TOPMOST, PW_RENDERFULLCONTENT, SWP_SHOWWINDOW, SW_RESTORE, WS_EX_APPWINDOW,
+        WS_EX_TOOLWINDOW,
+    },
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,9 +67,12 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
     };
 
     unsafe {
-        EnumWindows(Some(enum_window_proc), LPARAM((&mut ctx as *mut EnumContext) as isize))
-            .ok()
-            .context("EnumWindows failed")?;
+        EnumWindows(
+            Some(enum_window_proc),
+            LPARAM((&mut ctx as *mut EnumContext) as isize),
+        )
+        .ok()
+        .context("EnumWindows failed")?;
     }
 
     let main_hwnd = app
@@ -77,7 +81,11 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
         .map(|hwnd| (hwnd.0 as isize).to_string());
 
     let mut grouped = BTreeMap::<String, AppGroup>::new();
-    for window in ctx.windows.into_iter().filter(|window| Some(&window.hwnd) != main_hwnd.as_ref()) {
+    for window in ctx
+        .windows
+        .into_iter()
+        .filter(|window| Some(&window.hwnd) != main_hwnd.as_ref())
+    {
         let key = window.exe_path.to_ascii_lowercase();
         let group = grouped.entry(key.clone()).or_insert_with(|| AppGroup {
             group_id: key.clone(),
@@ -98,9 +106,19 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
         group.windows.sort_by_key(|window| window.last_active_rank);
     }
     groups.sort_by(|a, b| {
-        let a_rank = a.windows.first().map(|window| window.last_active_rank).unwrap_or(usize::MAX);
-        let b_rank = b.windows.first().map(|window| window.last_active_rank).unwrap_or(usize::MAX);
-        a_rank.cmp(&b_rank).then_with(|| a.app_name.cmp(&b.app_name))
+        let a_rank = a
+            .windows
+            .first()
+            .map(|window| window.last_active_rank)
+            .unwrap_or(usize::MAX);
+        let b_rank = b
+            .windows
+            .first()
+            .map(|window| window.last_active_rank)
+            .unwrap_or(usize::MAX);
+        a_rank
+            .cmp(&b_rank)
+            .then_with(|| a.app_name.cmp(&b.app_name))
     });
 
     Ok(groups)
@@ -122,6 +140,37 @@ pub fn activate_hwnd(hwnd: String) -> anyhow::Result<()> {
             Err(anyhow!("Windows did not allow this window to be focused"))
         }
     }
+}
+
+pub fn cover_monitor(window: &WebviewWindow) -> anyhow::Result<()> {
+    let hwnd = window.hwnd()?;
+    let hwnd = HWND(hwnd.0 as *mut c_void);
+
+    unsafe {
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return Err(anyhow!("failed to read monitor bounds"));
+        }
+
+        let rect = info.rcMonitor;
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            SWP_SHOWWINDOW,
+        )
+        .context("failed to cover monitor")?;
+    }
+
+    Ok(())
 }
 
 unsafe extern "system" fn enum_window_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -149,7 +198,10 @@ unsafe fn inspect_window(hwnd: HWND, ctx: &EnumContext) -> Option<WindowInfo> {
     let exe_path = get_process_path(pid).unwrap_or_default();
     let process_name = process_name_from_path(&exe_path);
 
-    if ctx.excluded_processes.contains(&process_name.to_ascii_lowercase()) {
+    if ctx
+        .excluded_processes
+        .contains(&process_name.to_ascii_lowercase())
+    {
         return None;
     }
 
@@ -276,7 +328,9 @@ unsafe fn is_switchable_window(hwnd: HWND) -> bool {
     let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
     let is_tool = (ex_style & WS_EX_TOOLWINDOW.0) != 0;
     let is_app = (ex_style & WS_EX_APPWINDOW.0) != 0;
-    let has_owner = GetWindow(hwnd, GW_OWNER).map(|owner| !owner.0.is_null()).unwrap_or(false);
+    let has_owner = GetWindow(hwnd, GW_OWNER)
+        .map(|owner| !owner.0.is_null())
+        .unwrap_or(false);
 
     if is_tool {
         return false;
@@ -297,7 +351,9 @@ unsafe fn get_window_title(hwnd: HWND) -> Option<String> {
         return None;
     }
 
-    let title = String::from_utf16_lossy(&buffer[..copied as usize]).trim().to_string();
+    let title = String::from_utf16_lossy(&buffer[..copied as usize])
+        .trim()
+        .to_string();
     if title.is_empty() {
         None
     } else {
@@ -306,8 +362,12 @@ unsafe fn get_window_title(hwnd: HWND) -> Option<String> {
 }
 
 unsafe fn get_process_path(pid: u32) -> anyhow::Result<String> {
-    let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, false, pid)
-        .with_context(|| format!("failed to open process {}", pid))?;
+    let process = OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+        false,
+        pid,
+    )
+    .with_context(|| format!("failed to open process {}", pid))?;
     let mut buffer = vec![0u16; MAX_PATH as usize];
     let len = K32GetModuleFileNameExW(process, None, &mut buffer);
     CloseHandle(process).ok();
@@ -356,7 +416,10 @@ mod tests {
 
     #[test]
     fn process_name_comes_from_path() {
-        assert_eq!(process_name_from_path(r"C:\Windows\explorer.exe"), "explorer.exe");
+        assert_eq!(
+            process_name_from_path(r"C:\Windows\explorer.exe"),
+            "explorer.exe"
+        );
     }
 
     #[test]

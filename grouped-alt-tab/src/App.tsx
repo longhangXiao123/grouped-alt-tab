@@ -1,11 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { Monitor, RefreshCw, Search, Settings } from "lucide-react";
+import { Monitor, RefreshCw, Save, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AppGroup } from "./types";
+import type { AppGroup, SwitcherSettings } from "./types";
 
 const emptyGroups: AppGroup[] = [];
+
+const defaultSettings: SwitcherSettings = {
+  hotkey: "Alt+`",
+  group_by: "exe_path",
+  preview_mode: "icons",
+  window_mode: "fullscreen",
+  window_width: 1280,
+  window_height: 720,
+  excluded_processes: ["grouped-alt-tab.exe", "ApplicationFrameHost.exe"]
+};
 
 type Selection = {
   group: number;
@@ -28,6 +38,9 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<SwitcherSettings>(defaultSettings);
+  const [savingSettings, setSavingSettings] = useState(false);
   const groupsRef = useRef<AppGroup[]>(emptyGroups);
   const selectedRef = useRef<Selection>({ group: 0, window: 0 });
   const sessionActiveRef = useRef(false);
@@ -159,7 +172,30 @@ export default function App() {
     }
   }, [applyGroups, applySelection, nextSelection]);
 
+  const loadSettings = useCallback(async () => {
+    try {
+      const result = await invoke<SwitcherSettings>("get_settings");
+      setSettings(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const saveSettings = useCallback(async () => {
+    setSavingSettings(true);
+    setError(null);
+    try {
+      await invoke("update_settings", { settings });
+      setSettingsOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingSettings(false);
+    }
+  }, [settings]);
+
   useEffect(() => {
+    void loadSettings();
     void refresh({ group: 0, window: 0 });
 
     const unlistenOpen = listen("switcher:open", async () => {
@@ -182,7 +218,7 @@ export default function App() {
       void unlistenCycle.then((dispose) => dispose());
       void unlistenChanged.then((dispose) => dispose());
     };
-  }, [cycleSelection, refresh]);
+  }, [cycleSelection, loadSettings, refresh]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -290,12 +326,82 @@ export default function App() {
         <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading} title="Refresh">
           <RefreshCw size={17} className={loading ? "spin" : undefined} />
         </button>
-        <button className="icon-button" type="button" title="Settings">
+        <button
+          className={`icon-button ${settingsOpen ? "active" : ""}`}
+          type="button"
+          onClick={() => setSettingsOpen((open) => !open)}
+          title="Settings"
+        >
           <Settings size={17} />
         </button>
       </header>
 
       {error ? <div className="error">{error}</div> : null}
+
+      {settingsOpen ? (
+        <section className="settings-panel" aria-label="Settings">
+          <div className="setting-group">
+            <span className="setting-label">窗口大小</span>
+            <div className="segmented-control" role="group" aria-label="Window size mode">
+              <button
+                className={settings.window_mode === "fullscreen" ? "selected" : ""}
+                type="button"
+                onClick={() => setSettings((current) => ({ ...current, window_mode: "fullscreen" }))}
+              >
+                全屏
+              </button>
+              <button
+                className={settings.window_mode === "custom" ? "selected" : ""}
+                type="button"
+                onClick={() => setSettings((current) => ({ ...current, window_mode: "custom" }))}
+              >
+                自定义
+              </button>
+            </div>
+          </div>
+
+          <label className="number-field">
+            <span>宽度</span>
+            <input
+              type="number"
+              min={720}
+              max={7680}
+              step={10}
+              disabled={settings.window_mode !== "custom"}
+              value={settings.window_width}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  window_width: Number(event.target.value) || current.window_width
+                }))
+              }
+            />
+          </label>
+
+          <label className="number-field">
+            <span>高度</span>
+            <input
+              type="number"
+              min={460}
+              max={4320}
+              step={10}
+              disabled={settings.window_mode !== "custom"}
+              value={settings.window_height}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  window_height: Number(event.target.value) || current.window_height
+                }))
+              }
+            />
+          </label>
+
+          <button className="save-button" type="button" onClick={() => void saveSettings()} disabled={savingSettings}>
+            <Save size={16} />
+            <span>{savingSettings ? "保存中" : "保存"}</span>
+          </button>
+        </section>
+      ) : null}
 
       <section className="content">
         <aside className="groups" aria-label="Application groups">

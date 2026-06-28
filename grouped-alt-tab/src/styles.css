@@ -34,8 +34,8 @@ input {
 .shell {
   width: 100vw;
   height: 100vh;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background:
@@ -202,6 +202,7 @@ input {
 }
 
 .content {
+  flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);

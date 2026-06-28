@@ -53,6 +53,14 @@ fn update_settings(app: AppHandle, settings: SwitcherSettings) -> AppResult<()> 
     save_settings(&app, &settings).map_err(AppError::from)
 }
 
+#[tauri::command]
+fn apply_switcher_window_bounds(app: AppHandle) -> AppResult<()> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| AppError::Message("main window is missing".to_string()))?;
+    apply_window_bounds(&app, &window).map_err(AppError::from)
+}
+
 fn show_switcher_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -70,8 +78,13 @@ fn show_switcher_window(app: &AppHandle) {
 fn apply_window_bounds(app: &AppHandle, window: &WebviewWindow) -> anyhow::Result<()> {
     let settings = load_settings(app)?;
     if settings.window_mode != "custom" {
+        window.set_fullscreen(true)?;
         cover_monitor(window)?;
         return Ok(());
+    }
+
+    if window.is_fullscreen()? {
+        window.set_fullscreen(false)?;
     }
 
     let monitor = window
@@ -130,7 +143,8 @@ pub fn run() {
             list_window_groups,
             activate_window,
             get_settings,
-            update_settings
+            update_settings,
+            apply_switcher_window_bounds
         ])
         .setup(move |app| {
             if let Err(error) = app.global_shortcut().register(register_shortcut) {

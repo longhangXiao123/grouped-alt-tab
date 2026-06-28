@@ -164,6 +164,7 @@ export default function App() {
 
       applySelection(nextSelection(nextGroups, selectedRef.current));
       await getCurrentWindow().show();
+      await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -202,6 +203,7 @@ export default function App() {
       sessionActiveRef.current = false;
       await refresh();
       await getCurrentWindow().show();
+      await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     });
 

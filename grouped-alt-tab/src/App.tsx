@@ -77,6 +77,18 @@ export default function App() {
     return { group, window: 0 };
   }, [clampSelection]);
 
+  const nextGroupSelection = useCallback((nextGroups: AppGroup[], selection: Selection) => {
+    if (nextGroups.length === 0) {
+      return { group: 0, window: 0 };
+    }
+
+    const current = clampSelection(nextGroups, selection);
+    return {
+      group: (current.group + 1) % nextGroups.length,
+      window: 0
+    };
+  }, [clampSelection]);
+
   const filteredGroups = useMemo(() => {
     const term = query.trim().toLowerCase();
     if (!term) return groups;
@@ -174,6 +186,34 @@ export default function App() {
     }
   }, [applyGroups, applySelection, nextSelection]);
 
+  const cycleGroupSelection = useCallback(async (forceRefresh: boolean) => {
+    const now = performance.now();
+    if (now - lastCycleAtRef.current < 80) {
+      return;
+    }
+    lastCycleAtRef.current = now;
+    sessionActiveRef.current = true;
+    setError(null);
+
+    try {
+      let nextGroups = groupsRef.current;
+      if (forceRefresh || nextGroups.length === 0) {
+        setLoading(true);
+        nextGroups = await invoke<AppGroup[]>("list_window_groups");
+        applyGroups(nextGroups);
+      }
+
+      applySelection(nextGroupSelection(nextGroups, selectedRef.current));
+      await getCurrentWindow().show();
+      await invoke("apply_switcher_window_bounds");
+      await getCurrentWindow().setFocus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [applyGroups, applySelection, nextGroupSelection]);
+
   const loadSettings = useCallback(async () => {
     try {
       const result = await invoke<SwitcherSettings>("get_settings");
@@ -212,6 +252,10 @@ export default function App() {
       void cycleSelection(groupsRef.current.length === 0);
     });
 
+    const unlistenGroupCycle = listen("switcher:group-cycle", () => {
+      void cycleGroupSelection(groupsRef.current.length === 0);
+    });
+
     const unlistenCommit = listen("switcher:commit", () => {
       if (sessionActiveRef.current) {
         void activateCurrentSelection();
@@ -225,10 +269,11 @@ export default function App() {
     return () => {
       void unlistenOpen.then((dispose) => dispose());
       void unlistenCycle.then((dispose) => dispose());
+      void unlistenGroupCycle.then((dispose) => dispose());
       void unlistenCommit.then((dispose) => dispose());
       void unlistenChanged.then((dispose) => dispose());
     };
-  }, [activateCurrentSelection, cycleSelection, loadSettings, refresh]);
+  }, [activateCurrentSelection, cycleGroupSelection, cycleSelection, loadSettings, refresh]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {

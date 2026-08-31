@@ -1,6 +1,6 @@
 # Grouped Alt-Tab
 
-A Windows 11 focused Tauri app switcher that groups top-level windows by executable path. Press `Alt + \`` to open the switcher.
+A Windows 11 focused Tauri app switcher that groups top-level windows by executable path. Press `Alt + \`` to switch windows, or `Alt + Shift + \`` to switch application groups.
 
 ## Prerequisites
 

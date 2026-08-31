@@ -149,40 +149,50 @@ fn apply_window_bounds(app: &AppHandle, window: &WebviewWindow) -> anyhow::Resul
 pub fn run() {
     let handler_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
     let register_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
+    let group_handler_shortcut =
+        Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::Backquote);
+    let group_register_shortcut = group_handler_shortcut;
     let repeat_generation = Arc::new(AtomicU64::new(0));
+    let group_repeat_generation = Arc::new(AtomicU64::new(0));
     let repeat_generation_handler = Arc::clone(&repeat_generation);
+    let group_repeat_generation_handler = Arc::clone(&group_repeat_generation);
 
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, event_shortcut, event| {
-                    if event_shortcut != &handler_shortcut {
+                    let (generation_state, cycle_event) = if event_shortcut == &handler_shortcut {
+                        (&repeat_generation_handler, "switcher:cycle")
+                    } else if event_shortcut == &group_handler_shortcut {
+                        (&group_repeat_generation_handler, "switcher:group-cycle")
+                    } else {
                         return;
-                    }
+                    };
 
                     match event.state() {
                         ShortcutState::Pressed => {
                             // A generation keeps delayed loops from earlier quick taps from
                             // joining the current hold after they wake up.
-                            let generation = repeat_generation_handler
+                            let generation = generation_state
                                 .fetch_add(1, Ordering::AcqRel)
                                 .wrapping_add(1);
 
                             show_switcher_window(app);
-                            let _ = app.emit("switcher:cycle", ());
+                            let _ = app.emit(cycle_event, ());
 
-                            let repeat_generation = Arc::clone(&repeat_generation_handler);
+                            let repeat_generation = Arc::clone(generation_state);
                             let app = app.clone();
+                            let cycle_event = cycle_event.to_string();
                             thread::spawn(move || {
                                 thread::sleep(Duration::from_millis(280));
                                 while repeat_generation.load(Ordering::Acquire) == generation {
-                                    let _ = app.emit("switcher:cycle", ());
+                                    let _ = app.emit(&cycle_event, ());
                                     thread::sleep(Duration::from_millis(100));
                                 }
                             });
                         }
                         ShortcutState::Released => {
-                            repeat_generation_handler.fetch_add(1, Ordering::AcqRel);
+                            generation_state.fetch_add(1, Ordering::AcqRel);
                             let _ = app.emit("switcher:commit", ());
                         }
                     }
@@ -215,7 +225,11 @@ pub fn run() {
             apply_switcher_window_bounds
         ])
         .setup(move |app| {
-            if let Err(error) = app.global_shortcut().register(register_shortcut) {
+            if let Err(error) = app
+                .global_shortcut()
+                .register(register_shortcut)
+                .and_then(|_| app.global_shortcut().register(group_register_shortcut))
+            {
                 app.handle()
                     .emit("hotkey:error", error.to_string())
                     .unwrap_or_default();

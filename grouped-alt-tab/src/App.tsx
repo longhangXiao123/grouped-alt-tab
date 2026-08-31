@@ -14,6 +14,7 @@ const defaultSettings: SwitcherSettings = {
   window_mode: "fullscreen",
   window_width: 1280,
   window_height: 720,
+  auto_start: false,
   excluded_processes: ["grouped-alt-tab.exe", "ApplicationFrameHost.exe"]
 };
 
@@ -393,6 +394,20 @@ export default function App() {
                 setSettings((current) => ({
                   ...current,
                   window_height: Number(event.target.value) || current.window_height
+                }))
+              }
+            />
+          </label>
+
+          <label className="toggle-field">
+            <span>开机自启</span>
+            <input
+              type="checkbox"
+              checked={settings.auto_start}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  auto_start: event.target.checked
                 }))
               }
             />

@@ -1,9 +1,11 @@
 mod settings;
 mod window_manager;
 
-use settings::{load_settings, save_settings, SwitcherSettings};
+use settings::{
+    is_auto_start_enabled, load_settings, save_settings, update_auto_start, SwitcherSettings,
+};
 use tauri::{
-    menu::MenuBuilder,
+    menu::{CheckMenuItemBuilder, MenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
 };
@@ -33,6 +35,8 @@ impl From<anyhow::Error> for AppError {
 
 type AppResult<T> = Result<T, AppError>;
 
+const TRAY_ID: &str = "main";
+
 #[tauri::command]
 fn list_window_groups(app: AppHandle) -> AppResult<Vec<AppGroup>> {
     list_groups(&app).map_err(AppError::from)
@@ -50,7 +54,9 @@ fn get_settings(app: AppHandle) -> AppResult<SwitcherSettings> {
 
 #[tauri::command]
 fn update_settings(app: AppHandle, settings: SwitcherSettings) -> AppResult<()> {
-    save_settings(&app, &settings).map_err(AppError::from)
+    save_settings(&app, &settings).map_err(AppError::from)?;
+    refresh_tray_menu(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -59,6 +65,31 @@ fn apply_switcher_window_bounds(app: AppHandle) -> AppResult<()> {
         .get_webview_window("main")
         .ok_or_else(|| AppError::Message("main window is missing".to_string()))?;
     apply_window_bounds(&app, &window).map_err(AppError::from)
+}
+
+fn build_tray_menu(app: &AppHandle) -> anyhow::Result<tauri::menu::Menu<tauri::Wry>> {
+    let auto_start = is_auto_start_enabled()?;
+    let auto_start_item = CheckMenuItemBuilder::with_id("auto_start", "Start with Windows")
+        .checked(auto_start)
+        .build(app)?;
+
+    MenuBuilder::new(app)
+        .text("show", "Show Switcher")
+        .item(&auto_start_item)
+        .separator()
+        .text("quit", "Exit")
+        .build()
+        .map_err(Into::into)
+}
+
+fn refresh_tray_menu(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+
+    if let Ok(menu) = build_tray_menu(app) {
+        let _ = tray.set_menu(Some(menu));
+    }
 }
 
 fn show_switcher_window(app: &AppHandle) {
@@ -134,6 +165,14 @@ pub fn run() {
                 show_switcher_window(app);
                 let _ = app.emit("switcher:open", ());
             }
+            "auto_start" => {
+                match is_auto_start_enabled().and_then(|enabled| update_auto_start(app, !enabled)) {
+                    Ok(()) => refresh_tray_menu(app),
+                    Err(error) => {
+                        let _ = app.emit("settings:error", error.to_string());
+                    }
+                }
+            }
             "quit" => {
                 app.exit(0);
             }
@@ -153,13 +192,9 @@ pub fn run() {
                     .unwrap_or_default();
             }
 
-            let menu = MenuBuilder::new(app)
-                .text("show", "Show Switcher")
-                .separator()
-                .text("quit", "Exit")
-                .build()?;
+            let menu = build_tray_menu(app.handle())?;
 
-            let tray = TrayIconBuilder::with_id("main")
+            let tray = TrayIconBuilder::with_id(TRAY_ID)
                 .icon(
                     app.default_window_icon()
                         .cloned()

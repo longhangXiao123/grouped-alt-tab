@@ -25,5 +25,6 @@ export type SwitcherSettings = {
   window_mode: "fullscreen" | "custom";
   window_width: number;
   window_height: number;
+  auto_start: boolean;
   excluded_processes: string[];
 };

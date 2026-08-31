@@ -121,7 +121,7 @@ input {
 .settings-panel {
   min-height: 58px;
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 160px 160px auto;
+  grid-template-columns: minmax(240px, 1fr) 150px 150px 128px auto;
   gap: 12px;
   align-items: end;
   padding: 10px 14px;
@@ -130,14 +130,16 @@ input {
 }
 
 .setting-group,
-.number-field {
+.number-field,
+.toggle-field {
   min-width: 0;
   display: grid;
   gap: 7px;
 }
 
 .setting-label,
-.number-field span {
+.number-field span,
+.toggle-field span {
   color: #9fb1bf;
   font-size: 12px;
 }
@@ -182,6 +184,42 @@ input {
   color: #7f929f;
   cursor: not-allowed;
   opacity: 0.68;
+}
+
+.toggle-field {
+  align-items: start;
+}
+
+.toggle-field input {
+  width: 46px;
+  height: 24px;
+  appearance: none;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+}
+
+.toggle-field input::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  border-radius: 50%;
+  background: #d6e2ea;
+  transition: transform 0.16s ease;
+}
+
+.toggle-field input:checked {
+  border-color: rgba(125, 211, 252, 0.54);
+  background: rgba(14, 116, 144, 0.72);
+}
+
+.toggle-field input:checked::before {
+  transform: translateX(20px);
 }
 
 .save-button {

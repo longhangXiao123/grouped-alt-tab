@@ -4,6 +4,12 @@ mod window_manager;
 use settings::{
     is_auto_start_enabled, load_settings, save_settings, update_auto_start, SwitcherSettings,
 };
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::Duration;
 use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -143,20 +149,43 @@ fn apply_window_bounds(app: &AppHandle, window: &WebviewWindow) -> anyhow::Resul
 pub fn run() {
     let handler_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
     let register_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
+    let repeat_generation = Arc::new(AtomicU64::new(0));
+    let repeat_generation_handler = Arc::clone(&repeat_generation);
 
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, event_shortcut, event| {
-                    if event_shortcut != &handler_shortcut
-                        || event.state() != ShortcutState::Pressed
-                    {
+                    if event_shortcut != &handler_shortcut {
                         return;
                     }
 
-                    show_switcher_window(app);
+                    match event.state() {
+                        ShortcutState::Pressed => {
+                            // A generation keeps delayed loops from earlier quick taps from
+                            // joining the current hold after they wake up.
+                            let generation = repeat_generation_handler
+                                .fetch_add(1, Ordering::AcqRel)
+                                .wrapping_add(1);
 
-                    let _ = app.emit("switcher:cycle", ());
+                            show_switcher_window(app);
+                            let _ = app.emit("switcher:cycle", ());
+
+                            let repeat_generation = Arc::clone(&repeat_generation_handler);
+                            let app = app.clone();
+                            thread::spawn(move || {
+                                thread::sleep(Duration::from_millis(280));
+                                while repeat_generation.load(Ordering::Acquire) == generation {
+                                    let _ = app.emit("switcher:cycle", ());
+                                    thread::sleep(Duration::from_millis(100));
+                                }
+                            });
+                        }
+                        ShortcutState::Released => {
+                            repeat_generation_handler.fetch_add(1, Ordering::AcqRel);
+                            let _ = app.emit("switcher:commit", ());
+                        }
+                    }
                 })
                 .build(),
         )

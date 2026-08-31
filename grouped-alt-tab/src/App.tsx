@@ -212,6 +212,12 @@ export default function App() {
       void cycleSelection(groupsRef.current.length === 0);
     });
 
+    const unlistenCommit = listen("switcher:commit", () => {
+      if (sessionActiveRef.current) {
+        void activateCurrentSelection();
+      }
+    });
+
     const unlistenChanged = listen("windows:changed", () => {
       void refresh();
     });
@@ -219,9 +225,10 @@ export default function App() {
     return () => {
       void unlistenOpen.then((dispose) => dispose());
       void unlistenCycle.then((dispose) => dispose());
+      void unlistenCommit.then((dispose) => dispose());
       void unlistenChanged.then((dispose) => dispose());
     };
-  }, [cycleSelection, loadSettings, refresh]);
+  }, [activateCurrentSelection, cycleSelection, loadSettings, refresh]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -233,12 +240,6 @@ export default function App() {
       }
 
       if (event.key === "Alt") {
-        return;
-      }
-
-      if (event.altKey && (event.key === "`" || event.code === "Backquote")) {
-        event.preventDefault();
-        void cycleSelection(false);
         return;
       }
 
@@ -286,20 +287,11 @@ export default function App() {
       }
     };
 
-    const keyUpHandler = (event: KeyboardEvent) => {
-      if (event.key === "Alt" && sessionActiveRef.current) {
-        event.preventDefault();
-        void activateCurrentSelection();
-      }
-    };
-
     window.addEventListener("keydown", handler);
-    window.addEventListener("keyup", keyUpHandler);
     return () => {
       window.removeEventListener("keydown", handler);
-      window.removeEventListener("keyup", keyUpHandler);
     };
-  }, [activateCurrentSelection, activateSelected, activeGroup, applySelection, cycleSelection, filteredGroups.length]);
+  }, [activateSelected, activeGroup, applySelection, filteredGroups.length]);
 
   useEffect(() => {
     if (selectedGroup >= filteredGroups.length) {

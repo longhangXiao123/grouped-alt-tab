@@ -32,6 +32,37 @@ function initials(name: string) {
     .join("") || "APP";
 }
 
+// event.code → 热键字符串里的键名,与 Rust 端 global-hotkey 的解析规则对应
+const CODE_KEYS: Record<string, string> = {
+  Backquote: "`",
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Semicolon: ";",
+  Quote: "'",
+  Backslash: "\\",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Space: "Space",
+  Tab: "Tab",
+  ArrowUp: "ArrowUp",
+  ArrowDown: "ArrowDown",
+  ArrowLeft: "ArrowLeft",
+  ArrowRight: "ArrowRight"
+};
+
+function codeToKey(code: string): string | null {
+  if (CODE_KEYS[code]) return CODE_KEYS[code];
+  const letter = /^Key([A-Z])$/.exec(code)?.[1];
+  if (letter) return letter;
+  const digit = /^Digit([0-9])$/.exec(code)?.[1];
+  if (digit) return digit;
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
+  return null;
+}
+
 export default function App() {
   const [groups, setGroups] = useState<AppGroup[]>(emptyGroups);
   const [selectedGroup, setSelectedGroup] = useState(0);
@@ -42,11 +73,14 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<SwitcherSettings>(defaultSettings);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [hotkeyCapturing, setHotkeyCapturing] = useState(false);
+  const [hotkeyHint, setHotkeyHint] = useState<string | null>(null);
   const groupsRef = useRef<AppGroup[]>(emptyGroups);
   const selectedRef = useRef<Selection>({ group: 0, window: 0 });
   const sessionActiveRef = useRef(false);
   const lastCycleAtRef = useRef(0);
   const shellRef = useRef<HTMLElement | null>(null);
+  const hotkeyCapturingRef = useRef(false);
 
   const clampSelection = useCallback((nextGroups: AppGroup[], selection: Selection) => {
     if (nextGroups.length === 0) {
@@ -295,6 +329,44 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      // 捕获新热键:拦截所有按键,组合键写入设置,Esc 取消
+      if (hotkeyCapturingRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (event.key === "Escape") {
+          hotkeyCapturingRef.current = false;
+          setHotkeyCapturing(false);
+          setHotkeyHint(null);
+          return;
+        }
+
+        if (["Alt", "Control", "Shift", "Meta"].includes(event.key)) {
+          return;
+        }
+
+        const key = codeToKey(event.code);
+        if (!key) {
+          return;
+        }
+
+        const parts: string[] = [];
+        if (event.ctrlKey) parts.push("Ctrl");
+        if (event.altKey) parts.push("Alt");
+        if (event.shiftKey) parts.push("Shift");
+        if (event.metaKey) parts.push("Win");
+        if (parts.length === 0) {
+          setHotkeyHint("热键需要至少一个修饰键(Ctrl / Alt / Shift / Win)");
+          return;
+        }
+
+        setSettings((current) => ({ ...current, hotkey: [...parts, key].join("+") }));
+        hotkeyCapturingRef.current = false;
+        setHotkeyCapturing(false);
+        setHotkeyHint(null);
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         sessionActiveRef.current = false;
@@ -364,6 +436,14 @@ export default function App() {
     }
   }, [applySelection, filteredGroups.length, selectedGroup]);
 
+  useEffect(() => {
+    if (!settingsOpen && hotkeyCapturingRef.current) {
+      hotkeyCapturingRef.current = false;
+      setHotkeyCapturing(false);
+      setHotkeyHint(null);
+    }
+  }, [settingsOpen]);
+
   return (
     <main className="shell" ref={shellRef}>
       <header className="toolbar">
@@ -400,6 +480,25 @@ export default function App() {
 
       {settingsOpen ? (
         <section className="settings-panel" aria-label="Settings">
+          <div className="setting-group">
+            <span className="setting-label">切换热键</span>
+            <button
+              className={`hotkey-field ${hotkeyCapturing ? "listening" : ""}`}
+              type="button"
+              title="点击后按下新的组合键,Esc 取消"
+              onClick={() => {
+                hotkeyCapturingRef.current = true;
+                setHotkeyCapturing(true);
+                setHotkeyHint(null);
+              }}
+            >
+              {hotkeyCapturing ? "按下新组合键…" : settings.hotkey}
+            </button>
+            <span className={`setting-hint ${hotkeyHint ? "error" : ""}`}>
+              {hotkeyHint ?? "组间切换 = 该热键 + Shift"}
+            </span>
+          </div>
+
           <div className="setting-group">
             <span className="setting-label">窗口大小</span>
             <div className="segmented-control" role="group" aria-label="Window size mode">

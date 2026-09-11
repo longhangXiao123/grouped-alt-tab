@@ -5,6 +5,7 @@ use settings::{
     is_auto_start_enabled, load_settings, save_settings, update_auto_start, SwitcherSettings,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::{
@@ -12,7 +13,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use window_manager::{activate_hwnd, cover_monitor, list_groups, AppGroup};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
 
@@ -41,13 +42,75 @@ type AppResult<T> = Result<T, AppError>;
 
 const TRAY_ID: &str = "main";
 
+const DEFAULT_HOTKEY: &str = "Alt+`";
+
 /// 一次热键切换会话的共享状态。
-/// generation 用来让旧的延时循环失效,watch_active 标记 Alt 松开监视线程是否在跑。
+/// generation 用来让旧的延时循环失效,watch_active 标记 Alt 松开监视线程是否在跑,
+/// bindings 保存当前生效的两个快捷键,热键 handler 用它识别事件来源。
 #[derive(Default)]
 struct HotkeySession {
     repeat_generation: AtomicU64,
     group_repeat_generation: AtomicU64,
     watch_active: AtomicBool,
+    bindings: Mutex<Option<ShortcutBindings>>,
+}
+
+struct ShortcutBindings {
+    main: Shortcut,
+    group: Shortcut,
+}
+
+fn session_bindings(
+    session: &HotkeySession,
+) -> std::sync::MutexGuard<'_, Option<ShortcutBindings>> {
+    session
+        .bindings
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 解析并注册新的主热键(组间切换自动叠加 Shift),成功后换掉旧绑定。
+/// 注册失败(格式错误或被占用)时返回错误,旧热键保持不变。
+fn apply_hotkeys(app: &AppHandle, spec: &str) -> Result<(), String> {
+    let trimmed = spec.trim();
+    let main: Shortcut = trimmed
+        .parse()
+        .map_err(|_| format!("无法识别热键 \"{trimmed}\",示例:Ctrl+Alt+Q"))?;
+    if main.mods.is_empty() {
+        return Err(format!("热键 \"{trimmed}\" 需要至少一个修饰键(Ctrl/Alt/Shift/Win)"));
+    }
+    let group = Shortcut::new(Some(main.mods | Modifiers::SHIFT), main.key);
+
+    let global_shortcut = app.global_shortcut();
+    let session = app.state::<HotkeySession>();
+    let mut bindings = session_bindings(&session);
+    let same_main = bindings.as_ref().map(|b| b.main == main).unwrap_or(false);
+    let same_group = bindings.as_ref().map(|b| b.group == group).unwrap_or(false);
+
+    // 相同热键重复注册会报错,跳过已生效的组合
+    if !same_main {
+        global_shortcut
+            .register(main)
+            .map_err(|_| format!("热键 {trimmed} 注册失败,可能已被其他程序占用"))?;
+    }
+    if !same_group {
+        if let Err(error) = global_shortcut.register(group) {
+            if !same_main {
+                let _ = global_shortcut.unregister(main);
+            }
+            return Err(format!("组间切换热键(热键+Shift)注册失败:{error}"));
+        }
+    }
+
+    if let Some(old) = bindings.replace(ShortcutBindings { main, group }) {
+        if !same_main {
+            let _ = global_shortcut.unregister(old.main);
+        }
+        if !same_group {
+            let _ = global_shortcut.unregister(old.group);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -76,7 +139,14 @@ fn get_settings(app: AppHandle) -> AppResult<SwitcherSettings> {
 
 #[tauri::command]
 fn update_settings(app: AppHandle, settings: SwitcherSettings) -> AppResult<()> {
+    let previous = load_settings(&app).map_err(AppError::from)?;
     save_settings(&app, &settings).map_err(AppError::from)?;
+    if let Err(message) = apply_hotkeys(&app, &settings.hotkey) {
+        // 新热键不可用:回滚到之前的设置和热键,让前端展示错误
+        let _ = save_settings(&app, &previous);
+        let _ = apply_hotkeys(&app, &previous.hotkey);
+        return Err(AppError::Message(message));
+    }
     refresh_tray_menu(&app);
     Ok(())
 }
@@ -163,25 +233,23 @@ fn apply_window_bounds(app: &AppHandle, window: &WebviewWindow) -> anyhow::Resul
 }
 
 pub fn run() {
-    let handler_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
-    let register_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Backquote);
-    let group_handler_shortcut =
-        Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::Backquote);
-    let group_register_shortcut = group_handler_shortcut;
-
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, event_shortcut, event| {
                     let session = app.state::<HotkeySession>();
-                    let (generation_state, cycle_event, is_group) =
-                        if event_shortcut == &handler_shortcut {
-                            (&session.repeat_generation, "switcher:cycle", false)
-                        } else if event_shortcut == &group_handler_shortcut {
-                            (&session.group_repeat_generation, "switcher:group-cycle", true)
-                        } else {
-                            return;
-                        };
+                    let (generation_state, cycle_event, is_group) = {
+                        let bindings = session_bindings(&session);
+                        match bindings.as_ref() {
+                            Some(bindings) if bindings.main == *event_shortcut => {
+                                (&session.repeat_generation, "switcher:cycle", false)
+                            }
+                            Some(bindings) if bindings.group == *event_shortcut => {
+                                (&session.group_repeat_generation, "switcher:group-cycle", true)
+                            }
+                            _ => return,
+                        }
+                    };
 
                     match event.state() {
                         ShortcutState::Pressed => {
@@ -295,14 +363,16 @@ pub fn run() {
                 }
             }
 
-            if let Err(error) = app
-                .global_shortcut()
-                .register(register_shortcut)
-                .and_then(|_| app.global_shortcut().register(group_register_shortcut))
-            {
-                app.handle()
-                    .emit("hotkey:error", error.to_string())
-                    .unwrap_or_default();
+            let settings = match load_settings(app.handle()) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    eprintln!("failed to load settings, using defaults: {error}");
+                    SwitcherSettings::default()
+                }
+            };
+            if let Err(error) = apply_hotkeys(app.handle(), &settings.hotkey) {
+                eprintln!("configured hotkey unavailable ({error}), falling back to {DEFAULT_HOTKEY}");
+                let _ = apply_hotkeys(app.handle(), DEFAULT_HOTKEY);
             }
 
             let menu = build_tray_menu(app.handle())?;

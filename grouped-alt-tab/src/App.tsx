@@ -81,6 +81,14 @@ export default function App() {
   const lastCycleAtRef = useRef(0);
   const shellRef = useRef<HTMLElement | null>(null);
   const hotkeyCapturingRef = useRef(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  // 弹出时把焦点从搜索框挪走,让 W/M 管理键随时可用;想过滤时点击搜索框即可
+  const blurSearch = useCallback(() => {
+    if (document.activeElement === searchRef.current) {
+      searchRef.current?.blur();
+    }
+  }, []);
 
   const clampSelection = useCallback((nextGroups: AppGroup[], selection: Selection) => {
     if (nextGroups.length === 0) {
@@ -200,6 +208,30 @@ export default function App() {
     await activateWindowByHwnd(activeWindow.hwnd);
   }, [activateWindowByHwnd, activeWindow]);
 
+  const closeSelected = useCallback(async () => {
+    const hwnd = activeWindow?.hwnd;
+    if (!hwnd) return;
+    try {
+      await invoke("close_window", { hwnd });
+      // 给目标应用一点时间处理关闭,再刷新列表
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [activeWindow, refresh]);
+
+  const minimizeSelected = useCallback(async () => {
+    const hwnd = activeWindow?.hwnd;
+    if (!hwnd) return;
+    try {
+      await invoke("minimize_window", { hwnd });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [activeWindow, refresh]);
+
   const activateCurrentSelection = useCallback(async () => {
     const selection = selectedRef.current;
     const hwnd = groupsRef.current[selection.group]?.windows[selection.window]?.hwnd;
@@ -227,6 +259,7 @@ export default function App() {
       applySelection(nextSelection(nextGroups, selectedRef.current));
       await getCurrentWindow().show();
       playEntrance();
+      blurSearch();
       await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     } catch (err) {
@@ -234,7 +267,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [applyGroups, applySelection, nextSelection, playEntrance]);
+  }, [applyGroups, applySelection, blurSearch, nextSelection, playEntrance]);
 
   const cycleGroupSelection = useCallback(async (forceRefresh: boolean) => {
     const now = performance.now();
@@ -256,6 +289,7 @@ export default function App() {
       applySelection(nextGroupSelection(nextGroups, selectedRef.current));
       await getCurrentWindow().show();
       playEntrance();
+      blurSearch();
       await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     } catch (err) {
@@ -263,7 +297,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [applyGroups, applySelection, nextGroupSelection, playEntrance]);
+  }, [applyGroups, applySelection, blurSearch, nextGroupSelection, playEntrance]);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -296,6 +330,7 @@ export default function App() {
       await refresh();
       await getCurrentWindow().show();
       playEntrance();
+      blurSearch();
       await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     });
@@ -325,7 +360,7 @@ export default function App() {
       void unlistenCommit.then((dispose) => dispose());
       void unlistenChanged.then((dispose) => dispose());
     };
-  }, [activateCurrentSelection, cycleGroupSelection, cycleSelection, loadSettings, playEntrance, refresh]);
+  }, [activateCurrentSelection, blurSearch, cycleGroupSelection, cycleSelection, loadSettings, playEntrance, refresh]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -386,6 +421,24 @@ export default function App() {
         return;
       }
 
+      // W/M 窗口管理:在输入框里打字时不触发
+      const target = event.target;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+
+      if (!isTyping && (event.key === "w" || event.key === "W")) {
+        event.preventDefault();
+        void closeSelected();
+        return;
+      }
+
+      if (!isTyping && (event.key === "m" || event.key === "M")) {
+        event.preventDefault();
+        void minimizeSelected();
+        return;
+      }
+
       if (event.key === "ArrowDown") {
         event.preventDefault();
         if (!activeGroup) return;
@@ -428,7 +481,7 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handler);
     };
-  }, [activateSelected, activeGroup, applySelection, filteredGroups.length]);
+  }, [activateSelected, activeGroup, applySelection, closeSelected, filteredGroups.length, minimizeSelected]);
 
   useEffect(() => {
     if (selectedGroup >= filteredGroups.length) {
@@ -454,6 +507,7 @@ export default function App() {
         <label className="search">
           <Search size={16} />
           <input
+            ref={searchRef}
             autoFocus
             placeholder="Filter windows"
             value={query}
@@ -651,6 +705,12 @@ export default function App() {
                     </div>
                   </button>
                 ))}
+              </div>
+              <div className="shortcut-hints">
+                <span>Enter 切换</span>
+                <span>W 关闭窗口</span>
+                <span>M 最小化</span>
+                <span>Esc 退出</span>
               </div>
             </>
           ) : (

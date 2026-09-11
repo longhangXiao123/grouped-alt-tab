@@ -14,7 +14,7 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use window_manager::{activate_hwnd, cover_monitor, list_groups, AppGroup};
+use window_manager::{activate_hwnd, close_hwnd, cover_monitor, list_groups, minimize_hwnd, AppGroup};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
 
 #[derive(Debug, thiserror::Error)]
@@ -121,6 +121,16 @@ fn list_window_groups(app: AppHandle) -> AppResult<Vec<AppGroup>> {
 #[tauri::command]
 fn activate_window(hwnd: String) -> AppResult<()> {
     activate_hwnd(hwnd).map_err(AppError::from)
+}
+
+#[tauri::command]
+fn close_window(hwnd: String) -> AppResult<()> {
+    close_hwnd(hwnd).map_err(AppError::from)
+}
+
+#[tauri::command]
+fn minimize_window(hwnd: String) -> AppResult<()> {
+    minimize_hwnd(hwnd).map_err(AppError::from)
 }
 
 /// 用户按 Esc 取消切换时调用:停掉自动循环和 Alt 监视,避免松开 Alt 时误提交。
@@ -346,6 +356,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_window_groups,
             activate_window,
+            close_window,
+            minimize_window,
             get_settings,
             update_settings,
             apply_switcher_window_bounds,

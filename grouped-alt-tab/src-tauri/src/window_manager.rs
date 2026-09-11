@@ -10,7 +10,7 @@ use std::{
 use tauri::{AppHandle, Manager, WebviewWindow};
 use windows::core::PCWSTR;
 use windows::Win32::{
-    Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, RECT},
+    Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, RECT, WPARAM},
     Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
         GetDIBits, GetMonitorInfoW, GetObjectW, GetWindowDC, MonitorFromWindow, ReleaseDC,
@@ -27,9 +27,10 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{
         DestroyIcon, EnumWindows, GetAncestor, GetIconInfo, GetLastActivePopup, GetWindow,
         GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-        GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, SetWindowPos,
-        ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER, HWND_TOPMOST, ICONINFO, PW_RENDERFULLCONTENT,
-        SW_RESTORE, SWP_SHOWWINDOW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, HICON,
+        GetWindowThreadProcessId, IsIconic, IsWindowVisible, PostMessageW, SetForegroundWindow,
+        SetWindowPos, ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER, HWND_TOPMOST, ICONINFO,
+        PW_RENDERFULLCONTENT, SW_MINIMIZE, SW_RESTORE, SWP_SHOWWINDOW, WM_CLOSE, WS_EX_APPWINDOW,
+        WS_EX_TOOLWINDOW, HICON,
     },
 };
 
@@ -195,10 +196,7 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
 }
 
 pub fn activate_hwnd(hwnd: String) -> anyhow::Result<()> {
-    let hwnd_value = hwnd
-        .parse::<isize>()
-        .with_context(|| format!("invalid window handle: {}", hwnd))?;
-    let hwnd = HWND(hwnd_value as *mut c_void);
+    let hwnd = parse_hwnd(&hwnd)?;
     unsafe {
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
@@ -210,6 +208,32 @@ pub fn activate_hwnd(hwnd: String) -> anyhow::Result<()> {
             Err(anyhow!("Windows did not allow this window to be focused"))
         }
     }
+}
+
+/// 请求关闭窗口:发 WM_CLOSE,交给目标应用自己走保存确认流程。
+pub fn close_hwnd(hwnd: String) -> anyhow::Result<()> {
+    let hwnd = parse_hwnd(&hwnd)?;
+    unsafe {
+        PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0))
+            .ok()
+            .context("failed to post WM_CLOSE")?;
+    }
+    Ok(())
+}
+
+pub fn minimize_hwnd(hwnd: String) -> anyhow::Result<()> {
+    let hwnd = parse_hwnd(&hwnd)?;
+    unsafe {
+        ShowWindow(hwnd, SW_MINIMIZE);
+    }
+    Ok(())
+}
+
+fn parse_hwnd(value: &str) -> anyhow::Result<HWND> {
+    let parsed = value
+        .parse::<isize>()
+        .with_context(|| format!("invalid window handle: {value}"))?;
+    Ok(HWND(parsed as *mut c_void))
 }
 
 pub fn cover_monitor(window: &WebviewWindow) -> anyhow::Result<()> {

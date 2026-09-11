@@ -335,9 +335,32 @@ input {
 }
 
 .groups,
+.groups,
 .windows {
   min-height: 0;
   overflow: auto;
+}
+
+.windows {
+  display: flex;
+  flex-direction: column;
+}
+
+.windows > * {
+  flex-shrink: 0;
+}
+
+.shortcut-hints {
+  margin-top: auto;
+  display: flex;
+  gap: 14px;
+  padding: 12px 6px 2px;
+  color: #8fa2b1;
+  font-size: 11px;
+}
+
+.shortcut-hints span {
+  white-space: nowrap;
 }
 
 .groups {

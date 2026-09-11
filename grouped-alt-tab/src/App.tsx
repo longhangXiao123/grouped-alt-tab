@@ -46,6 +46,7 @@ export default function App() {
   const selectedRef = useRef<Selection>({ group: 0, window: 0 });
   const sessionActiveRef = useRef(false);
   const lastCycleAtRef = useRef(0);
+  const shellRef = useRef<HTMLElement | null>(null);
 
   const clampSelection = useCallback((nextGroups: AppGroup[], selection: Selection) => {
     if (nextGroups.length === 0) {
@@ -114,6 +115,20 @@ export default function App() {
     setGroups(nextGroups);
   }, []);
 
+  // 每次切换器弹出时播放一次液态玻璃入场动画
+  const playEntrance = useCallback(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+    shellRef.current?.animate(
+      [
+        { transform: "scale(0.96) translateY(8px)", opacity: 0.55 },
+        { transform: "scale(1) translateY(0)", opacity: 1 }
+      ],
+      { duration: 260, easing: "cubic-bezier(0.2, 0.9, 0.3, 1.1)" }
+    );
+  }, []);
+
   const applySelection = useCallback((selection: Selection) => {
     selectedRef.current = selection;
     setSelectedGroup(selection.group);
@@ -177,6 +192,7 @@ export default function App() {
 
       applySelection(nextSelection(nextGroups, selectedRef.current));
       await getCurrentWindow().show();
+      playEntrance();
       await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     } catch (err) {
@@ -184,7 +200,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [applyGroups, applySelection, nextSelection]);
+  }, [applyGroups, applySelection, nextSelection, playEntrance]);
 
   const cycleGroupSelection = useCallback(async (forceRefresh: boolean) => {
     const now = performance.now();
@@ -205,6 +221,7 @@ export default function App() {
 
       applySelection(nextGroupSelection(nextGroups, selectedRef.current));
       await getCurrentWindow().show();
+      playEntrance();
       await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     } catch (err) {
@@ -212,7 +229,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [applyGroups, applySelection, nextGroupSelection]);
+  }, [applyGroups, applySelection, nextGroupSelection, playEntrance]);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -244,6 +261,7 @@ export default function App() {
       sessionActiveRef.current = false;
       await refresh();
       await getCurrentWindow().show();
+      playEntrance();
       await invoke("apply_switcher_window_bounds");
       await getCurrentWindow().setFocus();
     });
@@ -273,7 +291,7 @@ export default function App() {
       void unlistenCommit.then((dispose) => dispose());
       void unlistenChanged.then((dispose) => dispose());
     };
-  }, [activateCurrentSelection, cycleGroupSelection, cycleSelection, loadSettings, refresh]);
+  }, [activateCurrentSelection, cycleGroupSelection, cycleSelection, loadSettings, playEntrance, refresh]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -345,7 +363,7 @@ export default function App() {
   }, [applySelection, filteredGroups.length, selectedGroup]);
 
   return (
-    <main className="shell">
+    <main className="shell" ref={shellRef}>
       <header className="toolbar">
         <div className="brand">
           <Monitor size={18} />

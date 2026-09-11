@@ -225,6 +225,15 @@ pub fn run() {
             apply_switcher_window_bounds
         ])
         .setup(move |app| {
+            // 系统级亚克力材质：模糊窗口背后的真实桌面内容，
+            // 前端半透明面板叠加在上面形成液态玻璃分层。
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window_vibrancy::apply_acrylic(&window, None) {
+                    eprintln!("failed to apply acrylic window material: {error}");
+                }
+            }
+
             if let Err(error) = app
                 .global_shortcut()
                 .register(register_shortcut)

@@ -375,6 +375,9 @@ pub fn run() {
                 let _ = apply_hotkeys(app.handle(), DEFAULT_HOTKEY);
             }
 
+            // 启动时预热缩略图缓存,让首次唤出切换器就能命中缓存(否则要等约 1 秒截图)
+            let _ = window_manager::list_groups(app.handle());
+
             let menu = build_tray_menu(app.handle())?;
 
             let tray = TrayIconBuilder::with_id(TRAY_ID)

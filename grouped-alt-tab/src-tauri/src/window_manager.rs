@@ -62,6 +62,59 @@ struct EnumContext {
     excluded_processes: Vec<String>,
 }
 
+/// 缩略图脏缓存:窗口尺寸和标题都没变时复用上次截图,
+/// 只有确定变了才重新 PrintWindow。key 是 hwnd 字符串(与序列化一致)。
+fn thumbnail_cache() -> &'static Mutex<HashMap<String, CachedThumbnail>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedThumbnail>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct CachedThumbnail {
+    width: i32,
+    height: i32,
+    title: String,
+    thumbnail: Option<String>,
+}
+
+unsafe fn cached_thumbnail(hwnd: HWND, title: &str) -> Option<String> {
+    let mut rect = RECT::default();
+    if GetWindowRect(hwnd, &mut rect).is_err() {
+        return None;
+    }
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    let key = (hwnd.0 as isize).to_string();
+
+    let mut cache = thumbnail_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(cached) = cache.get(&key) {
+        if cached.width == width && cached.height == height && cached.title == title {
+            return cached.thumbnail.clone();
+        }
+    }
+
+    let thumbnail = capture_window_thumbnail(hwnd).ok();
+    cache.insert(
+        key,
+        CachedThumbnail {
+            width,
+            height,
+            title: title.to_string(),
+            thumbnail: thumbnail.clone(),
+        },
+    );
+    thumbnail
+}
+
+/// 刷新结束后清掉已关闭窗口的缓存条目,hwnd 复用由脏检查兜底。
+fn prune_thumbnail_cache(alive_hwnds: &BTreeMap<String, ()>) {
+    let mut cache = thumbnail_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.retain(|hwnd, _| alive_hwnds.contains_key(hwnd));
+}
+
 pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
     let settings = crate::settings::load_settings(app)?;
     let mut ctx = EnumContext {
@@ -87,6 +140,12 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
         .get_webview_window("main")
         .and_then(|window| window.hwnd().ok())
         .map(|hwnd| (hwnd.0 as isize).to_string());
+
+    let alive_hwnds: BTreeMap<String, ()> = ctx
+        .windows
+        .iter()
+        .map(|window| (window.hwnd.clone(), ()))
+        .collect();
 
     let mut grouped = BTreeMap::<String, AppGroup>::new();
     for window in ctx
@@ -129,6 +188,8 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
             .cmp(&b_rank)
             .then_with(|| a.app_name.cmp(&b.app_name))
     });
+
+    prune_thumbnail_cache(&alive_hwnds);
 
     Ok(groups)
 }
@@ -214,6 +275,7 @@ unsafe fn inspect_window(hwnd: HWND, ctx: &EnumContext) -> Option<WindowInfo> {
         return None;
     }
 
+    let thumbnail = cached_thumbnail(hwnd, &title);
     Some(WindowInfo {
         hwnd: (hwnd.0 as isize).to_string(),
         pid,
@@ -221,7 +283,7 @@ unsafe fn inspect_window(hwnd: HWND, ctx: &EnumContext) -> Option<WindowInfo> {
         process_name,
         exe_path,
         icon: None,
-        thumbnail: capture_window_thumbnail(hwnd).ok(),
+        thumbnail,
         is_minimized: IsIconic(hwnd).as_bool(),
         last_active_rank: ctx.windows.len(),
     })

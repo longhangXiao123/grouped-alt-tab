@@ -4,10 +4,7 @@ mod window_manager;
 use settings::{
     is_auto_start_enabled, load_settings, save_settings, update_auto_start, SwitcherSettings,
 };
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 use tauri::{
@@ -17,6 +14,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use window_manager::{activate_hwnd, cover_monitor, list_groups, AppGroup};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
 
 #[derive(Debug, thiserror::Error)]
 enum AppError {
@@ -43,6 +41,15 @@ type AppResult<T> = Result<T, AppError>;
 
 const TRAY_ID: &str = "main";
 
+/// 一次热键切换会话的共享状态。
+/// generation 用来让旧的延时循环失效,watch_active 标记 Alt 松开监视线程是否在跑。
+#[derive(Default)]
+struct HotkeySession {
+    repeat_generation: AtomicU64,
+    group_repeat_generation: AtomicU64,
+    watch_active: AtomicBool,
+}
+
 #[tauri::command]
 fn list_window_groups(app: AppHandle) -> AppResult<Vec<AppGroup>> {
     list_groups(&app).map_err(AppError::from)
@@ -51,6 +58,15 @@ fn list_window_groups(app: AppHandle) -> AppResult<Vec<AppGroup>> {
 #[tauri::command]
 fn activate_window(hwnd: String) -> AppResult<()> {
     activate_hwnd(hwnd).map_err(AppError::from)
+}
+
+/// 用户按 Esc 取消切换时调用:停掉自动循环和 Alt 监视,避免松开 Alt 时误提交。
+#[tauri::command]
+fn cancel_switcher_session(app: AppHandle) {
+    let session = app.state::<HotkeySession>();
+    session.repeat_generation.fetch_add(1, Ordering::AcqRel);
+    session.group_repeat_generation.fetch_add(1, Ordering::AcqRel);
+    session.watch_active.store(false, Ordering::Release);
 }
 
 #[tauri::command]
@@ -152,22 +168,20 @@ pub fn run() {
     let group_handler_shortcut =
         Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::Backquote);
     let group_register_shortcut = group_handler_shortcut;
-    let repeat_generation = Arc::new(AtomicU64::new(0));
-    let group_repeat_generation = Arc::new(AtomicU64::new(0));
-    let repeat_generation_handler = Arc::clone(&repeat_generation);
-    let group_repeat_generation_handler = Arc::clone(&group_repeat_generation);
 
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, event_shortcut, event| {
-                    let (generation_state, cycle_event) = if event_shortcut == &handler_shortcut {
-                        (&repeat_generation_handler, "switcher:cycle")
-                    } else if event_shortcut == &group_handler_shortcut {
-                        (&group_repeat_generation_handler, "switcher:group-cycle")
-                    } else {
-                        return;
-                    };
+                    let session = app.state::<HotkeySession>();
+                    let (generation_state, cycle_event, is_group) =
+                        if event_shortcut == &handler_shortcut {
+                            (&session.repeat_generation, "switcher:cycle", false)
+                        } else if event_shortcut == &group_handler_shortcut {
+                            (&session.group_repeat_generation, "switcher:group-cycle", true)
+                        } else {
+                            return;
+                        };
 
                     match event.state() {
                         ShortcutState::Pressed => {
@@ -180,20 +194,64 @@ pub fn run() {
                             show_switcher_window(app);
                             let _ = app.emit(cycle_event, ());
 
-                            let repeat_generation = Arc::clone(generation_state);
-                            let app = app.clone();
+                            // `\` 按住期间以 100ms 步进自动循环;`\` 提前松开(Alt 仍按住)时
+                            // generation 变化会让循环退出,但切换器保持打开。
+                            let repeat_app = app.clone();
                             let cycle_event = cycle_event.to_string();
                             thread::spawn(move || {
                                 thread::sleep(Duration::from_millis(280));
-                                while repeat_generation.load(Ordering::Acquire) == generation {
-                                    let _ = app.emit(&cycle_event, ());
+                                loop {
+                                    let state = if is_group {
+                                        repeat_app
+                                            .state::<HotkeySession>()
+                                            .group_repeat_generation
+                                            .load(Ordering::Acquire)
+                                    } else {
+                                        repeat_app
+                                            .state::<HotkeySession>()
+                                            .repeat_generation
+                                            .load(Ordering::Acquire)
+                                    };
+                                    if state != generation {
+                                        break;
+                                    }
+                                    let _ = repeat_app.emit(&cycle_event, ());
                                     thread::sleep(Duration::from_millis(100));
                                 }
                             });
+
+                            // Alt+Tab 语义:提交发生在 Alt 松开时,而不是 `\` 松开时。
+                            // 监视线程每次会话只启动一个;托盘打开的会话不经过这里,
+                            // 不会被 Alt 松开误提交。
+                            if !session.watch_active.swap(true, Ordering::AcqRel) {
+                                let watch_app = app.clone();
+                                thread::spawn(move || loop {
+                                    thread::sleep(Duration::from_millis(20));
+                                    let session = watch_app.state::<HotkeySession>();
+                                    if !session.watch_active.load(Ordering::Acquire) {
+                                        break;
+                                    }
+                                    let alt_down =
+                                        unsafe { GetAsyncKeyState(VK_MENU.0 as i32) } as u16
+                                            & 0x8000
+                                            != 0;
+                                    if !alt_down {
+                                        session.repeat_generation.fetch_add(1, Ordering::AcqRel);
+                                        session
+                                            .group_repeat_generation
+                                            .fetch_add(1, Ordering::AcqRel);
+                                        session.watch_active.store(false, Ordering::Release);
+                                        let _ = watch_app.emit("switcher:commit", ());
+                                        break;
+                                    }
+                                });
+                            }
                         }
                         ShortcutState::Released => {
+                            // `\` 松开时只停自动循环。只要 Alt 还按着就保持切换器打开,
+                            // 提交交给上面的 Alt 监视线程;若 Alt 已先松开,提交也已发生过,
+                            // 这里不做任何事。
                             generation_state.fetch_add(1, Ordering::AcqRel);
-                            let _ = app.emit("switcher:commit", ());
                         }
                     }
                 })
@@ -222,9 +280,12 @@ pub fn run() {
             activate_window,
             get_settings,
             update_settings,
-            apply_switcher_window_bounds
+            apply_switcher_window_bounds,
+            cancel_switcher_session
         ])
         .setup(move |app| {
+            app.manage(HotkeySession::default());
+
             // 系统级亚克力材质：模糊窗口背后的真实桌面内容，
             // 前端半透明面板叠加在上面形成液态玻璃分层。
             #[cfg(target_os = "windows")]

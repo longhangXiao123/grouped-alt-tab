@@ -298,6 +298,8 @@ export default function App() {
       if (event.key === "Escape") {
         event.preventDefault();
         sessionActiveRef.current = false;
+        // 通知后端停掉 Alt 松开监视线程,避免之后松开 Alt 时误提交
+        void invoke("cancel_switcher_session").catch(() => {});
         void getCurrentWindow().hide();
         return;
       }

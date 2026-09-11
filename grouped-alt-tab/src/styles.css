@@ -346,17 +346,27 @@ input {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
+/* 图标底座:中性玻璃小方块,托住真实应用图标;无图标时回退首字母 */
 .app-icon,
-.window-icon {
+.window-icon,
+.preview-icon {
   display: grid;
   place-items: center;
   border-radius: 12px;
-  background: linear-gradient(145deg, #ffd98a, #f2a93b);
-  color: #24303c;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.07));
+  color: #eaf3fb;
   font-weight: 760;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
     0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.app-icon img,
+.window-icon img,
+.preview-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .app-icon {
@@ -365,11 +375,18 @@ input {
   font-size: 13px;
 }
 
+.app-icon img {
+  padding: 5px;
+}
+
 .window-icon {
   width: 44px;
   height: 44px;
-  background: linear-gradient(145deg, #8fe3cf, #3fb89b);
   font-size: 12px;
+}
+
+.window-icon img {
+  padding: 6px;
 }
 
 .window-preview {
@@ -456,16 +473,12 @@ input {
 .preview-icon {
   width: 78px;
   height: 78px;
-  display: grid;
-  place-items: center;
-  border-radius: 20px;
-  background: linear-gradient(145deg, #8fe3cf, #3fb89b);
-  color: #15222b;
   font-size: 22px;
-  font-weight: 760;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
-    0 6px 18px rgba(0, 0, 0, 0.3);
+  border-radius: 20px;
+}
+
+.preview-icon img {
+  padding: 10px;
 }
 
 .window-list {

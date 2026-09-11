@@ -14,6 +14,7 @@ export type AppGroup = {
   group_id: string;
   app_name: string;
   exe_path: string;
+  icon: string | null;
   windows: WindowInfo[];
   active_window_hwnd: string | null;
 };

@@ -486,7 +486,13 @@ export default function App() {
               type="button"
               onClick={() => applySelection({ group: groupIndex, window: 0 })}
             >
-              <div className="app-icon">{initials(group.app_name)}</div>
+              <div className="app-icon">
+                {group.icon ? (
+                  <img src={group.icon} alt="" draggable={false} />
+                ) : (
+                  <span>{initials(group.app_name)}</span>
+                )}
+              </div>
               <div className="group-copy">
                 <span className="group-name">{group.app_name}</span>
                 <span className="group-count">{group.windows.length} windows</span>
@@ -507,7 +513,13 @@ export default function App() {
                   <img className="preview-image" src={activeWindow.thumbnail} alt="" />
                 ) : (
                   <div className="preview-fallback">
-                    <div className="preview-icon">{initials(activeWindow?.process_name ?? activeGroup.app_name)}</div>
+                    <div className="preview-icon">
+                      {activeGroup.icon ? (
+                        <img src={activeGroup.icon} alt="" draggable={false} />
+                      ) : (
+                        <span>{initials(activeWindow?.process_name ?? activeGroup.app_name)}</span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -523,7 +535,13 @@ export default function App() {
                     {window.thumbnail ? (
                       <img className="window-preview" src={window.thumbnail} alt="" />
                     ) : (
-                      <div className="window-icon">{initials(window.process_name)}</div>
+                      <div className="window-icon">
+                        {activeGroup.icon ? (
+                          <img src={activeGroup.icon} alt="" draggable={false} />
+                        ) : (
+                          <span>{initials(window.process_name)}</span>
+                        )}
+                      </div>
                     )}
                     <div className="window-copy">
                       <span className="window-title">{window.title}</span>

@@ -2,27 +2,34 @@ use anyhow::{anyhow, Context};
 use base64::{engine::general_purpose, Engine as _};
 use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 use serde::Serialize;
-use std::{collections::BTreeMap, ffi::c_void};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ffi::c_void,
+    sync::{Mutex, OnceLock},
+};
 use tauri::{AppHandle, Manager, WebviewWindow};
+use windows::core::PCWSTR;
 use windows::Win32::{
     Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, RECT},
     Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits,
-        GetMonitorInfoW, GetWindowDC, MonitorFromWindow, ReleaseDC, SelectObject, BITMAPINFO,
-        BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ, MONITORINFO,
-        MONITOR_DEFAULTTONEAREST, SRCCOPY,
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetDIBits, GetMonitorInfoW, GetObjectW, GetWindowDC, MonitorFromWindow, ReleaseDC,
+        SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
+        HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST, SRCCOPY,
     },
+    Storage::FileSystem::FILE_ATTRIBUTE_NORMAL,
     Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
     System::{
         ProcessStatus::K32GetModuleFileNameExW,
         Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ},
     },
+    UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON},
     UI::WindowsAndMessaging::{
-        EnumWindows, GetAncestor, GetLastActivePopup, GetWindow, GetWindowLongW, GetWindowRect,
-        GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-        SetForegroundWindow, SetWindowPos, ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER,
-        HWND_TOPMOST, PW_RENDERFULLCONTENT, SWP_SHOWWINDOW, SW_RESTORE, WS_EX_APPWINDOW,
-        WS_EX_TOOLWINDOW,
+        DestroyIcon, EnumWindows, GetAncestor, GetIconInfo, GetLastActivePopup, GetWindow,
+        GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+        GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, SetWindowPos,
+        ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER, HWND_TOPMOST, ICONINFO, PW_RENDERFULLCONTENT,
+        SW_RESTORE, SWP_SHOWWINDOW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, HICON,
     },
 };
 
@@ -44,6 +51,7 @@ pub struct AppGroup {
     pub group_id: String,
     pub app_name: String,
     pub exe_path: String,
+    pub icon: Option<String>,
     pub windows: Vec<WindowInfo>,
     pub active_window_hwnd: Option<String>,
 }
@@ -91,6 +99,7 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
             group_id: key.clone(),
             app_name: display_name(&window),
             exe_path: window.exe_path.clone(),
+            icon: icon_for_exe(&window.exe_path),
             windows: Vec::new(),
             active_window_hwnd: None,
         });
@@ -307,6 +316,141 @@ unsafe fn bitmap_to_png_data_url(
     PngEncoder::new(&mut png)
         .write_image(&rgba, width as u32, height as u32, ColorType::Rgba8.into())
         .context("failed to encode window thumbnail")?;
+
+    Ok(format!(
+        "data:image/png;base64,{}",
+        general_purpose::STANDARD.encode(png)
+    ))
+}
+
+fn icon_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 取应用图标并转成 PNG data URL,按 exe 路径缓存(含失败结果,避免反复尝试)。
+pub fn icon_for_exe(exe_path: &str) -> Option<String> {
+    let key = exe_path.to_ascii_lowercase();
+    let mut cache = icon_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(cached) = cache.get(&key) {
+        return cached.clone();
+    }
+
+    let icon = unsafe { extract_icon_data_url(exe_path) };
+    cache.insert(key, icon.clone());
+    icon
+}
+
+unsafe fn extract_icon_data_url(exe_path: &str) -> Option<String> {
+    let wide: Vec<u16> = exe_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut info = SHFILEINFOW::default();
+    let ok = SHGetFileInfoW(
+        PCWSTR(wide.as_ptr()),
+        FILE_ATTRIBUTE_NORMAL,
+        Some(&mut info),
+        std::mem::size_of::<SHFILEINFOW>() as u32,
+        SHGFI_ICON | SHGFI_LARGEICON,
+    );
+    if ok == 0 || info.hIcon.is_invalid() {
+        return None;
+    }
+
+    let result = icon_to_png_data_url(info.hIcon);
+    let _ = DestroyIcon(info.hIcon);
+    result.ok()
+}
+
+/// HICON → 32 位 BGRA → 反预乘 alpha → PNG data URL。
+unsafe fn icon_to_png_data_url(hicon: HICON) -> anyhow::Result<String> {
+    let mut info = ICONINFO::default();
+    GetIconInfo(hicon, &mut info).context("GetIconInfo failed")?;
+    let color = info.hbmColor;
+    if color.is_invalid() {
+        // 单色掩膜图标:现代应用极少见,交给前端首字母兜底
+        let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+        return Err(anyhow!("icon has no color bitmap"));
+    }
+
+    let mut bm = BITMAP::default();
+    if GetObjectW(
+        color,
+        std::mem::size_of::<BITMAP>() as i32,
+        Some(&mut bm as *mut BITMAP as *mut c_void),
+    ) == 0
+    {
+        let _ = DeleteObject(HGDIOBJ(color.0));
+        let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+        return Err(anyhow!("failed to read icon bitmap header"));
+    }
+    let width = bm.bmWidth;
+    let height = bm.bmHeight.abs();
+    if width <= 0 || height == 0 {
+        let _ = DeleteObject(HGDIOBJ(color.0));
+        let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+        return Err(anyhow!("icon bitmap is empty"));
+    }
+
+    let screen_dc = GetDC(None);
+    let mem_dc = CreateCompatibleDC(screen_dc);
+    let old = SelectObject(mem_dc, HGDIOBJ(color.0));
+
+    let mut bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bgra = vec![0u8; (width * height * 4) as usize];
+    let lines = GetDIBits(
+        mem_dc,
+        color,
+        0,
+        height as u32,
+        Some(bgra.as_mut_ptr() as *mut c_void),
+        &mut bmi,
+        DIB_RGB_COLORS,
+    );
+
+    SelectObject(mem_dc, old);
+    let _ = DeleteDC(mem_dc);
+    let _ = ReleaseDC(None, screen_dc);
+    let _ = DeleteObject(HGDIOBJ(color.0));
+    let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+    if lines == 0 {
+        return Err(anyhow!("failed to read icon pixels"));
+    }
+
+    // 图标位图是预乘 alpha 的 BGRA,还原成直通 alpha 的 RGBA
+    let mut rgba = Vec::with_capacity(bgra.len());
+    for pixel in bgra.chunks_exact(4) {
+        let (b, g, r, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
+        let unpremultiply = |channel: u8| -> u8 {
+            if a == 0 {
+                0
+            } else if a == 255 {
+                channel
+            } else {
+                ((channel as u32 * 255 + a as u32 / 2) / a as u32) as u8
+            }
+        };
+        rgba.push(unpremultiply(r));
+        rgba.push(unpremultiply(g));
+        rgba.push(unpremultiply(b));
+        rgba.push(a);
+    }
+
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png)
+        .write_image(&rgba, width as u32, height as u32, ColorType::Rgba8.into())
+        .context("failed to encode app icon")?;
 
     Ok(format!(
         "data:image/png;base64,{}",

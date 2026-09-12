@@ -220,21 +220,31 @@ fn apply_window_bounds(app: &AppHandle, window: &WebviewWindow) -> anyhow::Resul
         window.set_fullscreen(false)?;
     }
 
-    let monitor = window
-        .current_monitor()?
-        .or(window.primary_monitor()?)
-        .ok_or_else(|| anyhow::anyhow!("no monitor available"))?;
+    // 自定义尺寸模式同样定位到光标所在的显示器
+    let (monitor_x, monitor_y, monitor_width, monitor_height) =
+        match unsafe { window_manager::monitor_under_cursor() } {
+            Some(info) => {
+                let rect = info.rcMonitor;
+                (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+            }
+            None => {
+                let monitor = window
+                    .current_monitor()?
+                    .or_else(|| window.primary_monitor().ok().flatten())
+                    .ok_or_else(|| anyhow::anyhow!("no monitor available"))?;
+                let position = *monitor.position();
+                let size = *monitor.size();
+                (position.x, position.y, size.width as i32, size.height as i32)
+            }
+        };
 
-    let monitor_position = *monitor.position();
-    let monitor_size = *monitor.size();
     let size = PhysicalSize::new(
         settings.window_width.clamp(720, 7680),
         settings.window_height.clamp(460, 4320),
     );
-    let x_offset = (monitor_size.width.saturating_sub(size.width) / 2) as i32;
-    let y_offset = (monitor_size.height.saturating_sub(size.height) / 2) as i32;
-    let position =
-        PhysicalPosition::new(monitor_position.x + x_offset, monitor_position.y + y_offset);
+    let x_offset = ((monitor_width as u32).saturating_sub(size.width) / 2) as i32;
+    let y_offset = ((monitor_height as u32).saturating_sub(size.height) / 2) as i32;
+    let position = PhysicalPosition::new(monitor_x + x_offset, monitor_y + y_offset);
 
     window.set_position(position)?;
     window.set_size(size)?;

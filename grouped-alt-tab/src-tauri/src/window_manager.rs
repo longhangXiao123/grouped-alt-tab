@@ -10,12 +10,12 @@ use std::{
 use tauri::{AppHandle, Manager, WebviewWindow};
 use windows::core::PCWSTR;
 use windows::Win32::{
-    Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, RECT, WPARAM},
+    Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, POINT, RECT, WPARAM},
     Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetDIBits, GetMonitorInfoW, GetObjectW, GetWindowDC, MonitorFromWindow, ReleaseDC,
-        SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
-        HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST, SRCCOPY,
+        GetDIBits, GetMonitorInfoW, GetObjectW, GetWindowDC, MonitorFromPoint, MonitorFromWindow,
+        ReleaseDC, SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        HBITMAP, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST, SRCCOPY,
     },
     Storage::FileSystem::FILE_ATTRIBUTE_NORMAL,
     Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
@@ -25,8 +25,8 @@ use windows::Win32::{
     },
     UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON},
     UI::WindowsAndMessaging::{
-        DestroyIcon, EnumWindows, GetAncestor, GetIconInfo, GetLastActivePopup, GetWindow,
-        GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+        DestroyIcon, EnumWindows, GetAncestor, GetCursorPos, GetIconInfo, GetLastActivePopup,
+        GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
         GetWindowThreadProcessId, IsIconic, IsWindowVisible, PostMessageW, SetForegroundWindow,
         SetWindowPos, ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER, HWND_TOPMOST, ICONINFO,
         PW_RENDERFULLCONTENT, SW_MINIMIZE, SW_RESTORE, SWP_SHOWWINDOW, WM_CLOSE, WS_EX_APPWINDOW,
@@ -224,7 +224,8 @@ pub fn close_hwnd(hwnd: String) -> anyhow::Result<()> {
 pub fn minimize_hwnd(hwnd: String) -> anyhow::Result<()> {
     let hwnd = parse_hwnd(&hwnd)?;
     unsafe {
-        ShowWindow(hwnd, SW_MINIMIZE);
+        // 窗口本来就最小化时返回 FALSE,不算错误
+        let _ = ShowWindow(hwnd, SW_MINIMIZE);
     }
     Ok(())
 }
@@ -236,20 +237,42 @@ fn parse_hwnd(value: &str) -> anyhow::Result<HWND> {
     Ok(HWND(parsed as *mut c_void))
 }
 
+/// 光标所在的显示器——按下热键时用户的注意力在哪块屏,切换器就该出现在哪块屏。
+/// 取不到时回退到窗口自身最近的显示器。
+pub unsafe fn monitor_under_cursor() -> Option<MONITORINFO> {
+    let mut point = POINT::default();
+    GetCursorPos(&mut point).ok()?;
+    let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMonitorInfoW(monitor, &mut info).as_bool() {
+        Some(info)
+    } else {
+        None
+    }
+}
+
 pub fn cover_monitor(window: &WebviewWindow) -> anyhow::Result<()> {
     let hwnd = window.hwnd()?;
     let hwnd = HWND(hwnd.0 as *mut c_void);
 
     unsafe {
-        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
+        let mut info = match monitor_under_cursor() {
+            Some(info) => info,
+            None => {
+                let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                let mut fallback = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if !GetMonitorInfoW(monitor, &mut fallback).as_bool() {
+                    return Err(anyhow!("failed to read monitor bounds"));
+                }
+                fallback
+            }
         };
-
-        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
-            return Err(anyhow!("failed to read monitor bounds"));
-        }
 
         let rect = info.rcMonitor;
         SetWindowPos(

@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { Monitor, RefreshCw, Save, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppGroup, SwitcherSettings } from "./types";
@@ -80,6 +82,8 @@ export default function App() {
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; hwnd: string } | null>(null);
   const [excludedInput, setExcludedInput] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const groupsRef = useRef<AppGroup[]>(emptyGroups);
   const selectedRef = useRef<Selection>({ group: 0, window: 0 });
   const sessionActiveRef = useRef(false);
@@ -125,6 +129,40 @@ export default function App() {
     }
     return [...names].sort();
   }, [groups, settings.excluded_processes]);
+
+  const checkForUpdate = useCallback(async () => {
+    setCheckingUpdate(true);
+    setUpdateStatus("正在检查更新…");
+    try {
+      const update = await check();
+      if (!update) {
+        setUpdateStatus("已是最新版本");
+        return;
+      }
+
+      setUpdateStatus(`发现新版本 ${update.version},正在下载…`);
+      let total = 0;
+      let downloaded = 0;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength ?? 0;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (total > 0) {
+            setUpdateStatus(`正在下载更新 ${Math.round((downloaded / total) * 100)}%`);
+          }
+        } else if (event.event === "Finished") {
+          setUpdateStatus("下载完成,正在安装…");
+        }
+      });
+      setUpdateStatus("更新完成,应用即将重启…");
+      setTimeout(() => void relaunch(), 1500);
+    } catch (err) {
+      setUpdateStatus(`检查更新失败:${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, []);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const detailRef = useRef<HTMLElement | null>(null);
@@ -901,6 +939,14 @@ export default function App() {
               }
             />
           </label>
+
+          <div className="setting-group">
+            <span className="setting-label">软件更新</span>
+            <button className="update-button" type="button" disabled={checkingUpdate} onClick={() => void checkForUpdate()}>
+              {checkingUpdate ? "检查中…" : "检查更新"}
+            </button>
+            {updateStatus ? <span className="setting-hint">{updateStatus}</span> : null}
+          </div>
 
           <div className="setting-group excluded-field">
             <span className="setting-label">排除的进程(不在切换器中显示)</span>

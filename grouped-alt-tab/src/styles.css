@@ -283,7 +283,7 @@ input {
 
 .settings-panel {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr) 150px 150px 128px 128px auto;
+  grid-template-columns: minmax(170px, 1fr) minmax(200px, 1fr) 150px 150px 128px 128px 140px auto;
   gap: 12px;
   align-items: end;
   margin: 12px 16px 0;
@@ -291,6 +291,27 @@ input {
   border: 1px solid var(--panel-border);
   border-radius: 16px;
   background: var(--panel-fill);
+}
+
+.update-button {
+  height: 36px;
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  padding: 0 12px;
+  color: var(--text-1);
+  background: var(--fill);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.update-button:hover:not(:disabled) {
+  border-color: var(--stroke-strong);
+  background: var(--fill-strong);
+}
+
+.update-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .setting-group,

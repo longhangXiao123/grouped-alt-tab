@@ -1,6 +1,6 @@
 [package]
 name = "grouped-alt-tab"
-version = "0.1.0"
+version = "0.1.1"
 description = "A grouped Windows app switcher."
 authors = ["Grouped Alt-Tab"]
 edition = "2021"
@@ -36,3 +36,5 @@ windows = { version = "0.58", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging"
 ] }
+tauri-plugin-updater = "2.11.0"
+tauri-plugin-process = "2.3.1"

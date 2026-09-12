@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Grouped Alt-Tab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "dev.local.grouped-alt-tab",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -33,6 +33,15 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.ico"]
+    "icon": ["icons/icon.ico"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI5QUFFRDgyQjgwQzk1Q0IKUldUTGxReTRndTJxS1NRcmNVSHc0Y0RnZmFHNncwblNVTGNhbFpjWVBvcHBBbk5IT0lDSlZzd3gK",
+      "endpoints": [
+        "https://github.com/longhangXiao123/grouped-alt-tab/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

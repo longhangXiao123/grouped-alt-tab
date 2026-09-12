@@ -36,6 +36,8 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: grouped-alt-tab
           tagName: ${{ github.ref_name }}
@@ -43,3 +45,4 @@ jobs:
           releaseBody: "下载 Assets 中的安装包(NSIS 安装向导或 MSI)。"
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: true

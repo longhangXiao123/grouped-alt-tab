@@ -78,6 +78,8 @@ export default function App() {
   const [hotkeyHint, setHotkeyHint] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; hwnd: string } | null>(null);
+  const [excludedInput, setExcludedInput] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const groupsRef = useRef<AppGroup[]>(emptyGroups);
   const selectedRef = useRef<Selection>({ group: 0, window: 0 });
   const sessionActiveRef = useRef(false);
@@ -91,6 +93,38 @@ export default function App() {
     window.clearTimeout(noticeTimerRef.current);
     noticeTimerRef.current = window.setTimeout(() => setNotice(null), 1800);
   }, []);
+
+  const addExcludedProcess = useCallback((rawName: string) => {
+    const name = rawName.trim().toLowerCase();
+    if (!name) {
+      return;
+    }
+    setSettings((current) =>
+      current.excluded_processes.some((p) => p.toLowerCase() === name)
+        ? current
+        : { ...current, excluded_processes: [...current.excluded_processes, name] }
+    );
+    setExcludedInput("");
+  }, []);
+
+  const removeExcludedProcess = useCallback((name: string) => {
+    setSettings((current) => ({
+      ...current,
+      excluded_processes: current.excluded_processes.filter((p) => p !== name)
+    }));
+  }, []);
+
+  const pickerCandidates = useMemo(() => {
+    const excluded = new Set(settings.excluded_processes.map((p) => p.toLowerCase()));
+    const names = new Set<string>();
+    for (const group of groups) {
+      const name = group.exe_path.split(/[\\/]/).pop();
+      if (name && !excluded.has(name.toLowerCase())) {
+        names.add(name);
+      }
+    }
+    return [...names].sort();
+  }, [groups, settings.excluded_processes]);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const detailRef = useRef<HTMLElement | null>(null);
@@ -692,11 +726,13 @@ export default function App() {
       setHotkeyCapturing(false);
       setHotkeyHint(null);
     }
-  }, [settingsOpen]);
+    if (!settingsOpen && pickerOpen) {
+      setPickerOpen(false);
+    }
+  }, [settingsOpen, pickerOpen]);
 
   // 预览伪实时:选中窗口稳定 120ms 后单独重截它的缩略图,大图区永远是最新内容
-  const previewHwnd = activeWindow?.hwnd ?? null;
-  useEffect(() => {
+  const previewHwnd = activeWindow?.hwnd ?? null;  useEffect(() => {
     if (!previewHwnd) {
       return;
     }
@@ -865,6 +901,70 @@ export default function App() {
               }
             />
           </label>
+
+          <div className="setting-group excluded-field">
+            <span className="setting-label">排除的进程(不在切换器中显示)</span>
+            {settings.excluded_processes.length > 0 ? (
+              <div className="excluded-chips">
+                {settings.excluded_processes.map((name) => (
+                  <span key={name} className="excluded-chip">
+                    {name}
+                    <button
+                      type="button"
+                      className="chip-remove"
+                      title="移除"
+                      onClick={() => removeExcludedProcess(name)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="setting-hint">暂无排除项</span>
+            )}
+            <div className="excluded-add">
+              <input
+                value={excludedInput}
+                placeholder="输入进程名,如 notepad.exe"
+                onChange={(event) => setExcludedInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addExcludedProcess(excludedInput);
+                  }
+                }}
+              />
+              <button type="button" onClick={() => addExcludedProcess(excludedInput)}>
+                添加
+              </button>
+              <div className="picker-anchor">
+                <button type="button" onClick={() => setPickerOpen((open) => !open)}>
+                  从运行窗口添加
+                </button>
+                {pickerOpen ? (
+                  <div className="process-picker">
+                    {pickerCandidates.length === 0 ? (
+                      <span className="picker-empty">没有可添加的进程</span>
+                    ) : (
+                      pickerCandidates.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => {
+                            addExcludedProcess(name);
+                            setPickerOpen(false);
+                          }}
+                        >
+                          {name}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
 
           <button className="save-button" type="button" onClick={() => void saveSettings()} disabled={savingSettings}>
             <Save size={16} />

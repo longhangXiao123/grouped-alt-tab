@@ -266,6 +266,128 @@ input {
   color: #fda4af;
 }
 
+.excluded-field {
+  grid-column: 1 / -1;
+  position: relative;
+}
+
+.excluded-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.excluded-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #eaf2f8;
+  font-size: 12px;
+}
+
+.chip-remove {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #a7b8c6;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chip-remove:hover {
+  color: #fecdd3;
+}
+
+.excluded-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.excluded-add input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #f6fbff;
+  background: rgba(255, 255, 255, 0.08);
+  outline: 0;
+}
+
+.excluded-add input:focus {
+  border-color: rgba(150, 205, 255, 0.5);
+}
+
+.excluded-add > button,
+.picker-anchor > button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: #eaf2f8;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.excluded-add > button:hover,
+.picker-anchor > button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.picker-anchor {
+  position: relative;
+}
+
+.process-picker {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 15;
+  width: 250px;
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: linear-gradient(168deg, rgba(30, 40, 52, 0.96), rgba(18, 26, 36, 0.96));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.process-picker button {
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 10px;
+  text-align: left;
+  color: #eaf2f8;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-picker button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.picker-empty {
+  color: #8fa2b1;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
 .segmented-control {
   height: 36px;
   display: inline-grid;

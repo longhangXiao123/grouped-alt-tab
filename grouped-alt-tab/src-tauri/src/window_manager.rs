@@ -12,10 +12,11 @@ use windows::core::PCWSTR;
 use windows::Win32::{
     Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, POINT, RECT, WPARAM},
     Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetDIBits, GetMonitorInfoW, GetObjectW, GetWindowDC, MonitorFromPoint, MonitorFromWindow,
-        ReleaseDC, SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
-        HBITMAP, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST, SRCCOPY,
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, EnumDisplayMonitors,
+        GetDC, GetDIBits, GetMonitorInfoW, GetObjectW, GetWindowDC, MonitorFromPoint,
+        MonitorFromWindow, ReleaseDC, SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        SRCCOPY,
     },
     Storage::FileSystem::FILE_ATTRIBUTE_NORMAL,
     Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
@@ -27,10 +28,11 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{
         DestroyIcon, EnumWindows, GetAncestor, GetCursorPos, GetIconInfo, GetLastActivePopup,
         GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-        GetWindowThreadProcessId, IsIconic, IsWindowVisible, PostMessageW, SetForegroundWindow,
-        SetWindowPos, ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER, HWND_TOPMOST, ICONINFO,
-        PW_RENDERFULLCONTENT, SW_MINIMIZE, SW_RESTORE, SWP_SHOWWINDOW, WM_CLOSE, WS_EX_APPWINDOW,
-        WS_EX_TOOLWINDOW, HICON,
+        GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed, PostMessageW,
+        SetForegroundWindow, SetWindowPos, ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER,
+        HWND_NOTOPMOST, HWND_TOPMOST, ICONINFO, PW_RENDERFULLCONTENT, SW_MAXIMIZE, SW_MINIMIZE,
+        SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WM_CLOSE,
+        WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, HICON,
     },
 };
 
@@ -230,6 +232,135 @@ pub fn minimize_hwnd(hwnd: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 切换窗口置顶,返回切换后的状态(true = 已置顶)。
+pub fn toggle_topmost_hwnd(hwnd: String) -> anyhow::Result<bool> {
+    let hwnd = parse_hwnd(&hwnd)?;
+    unsafe {
+        let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        let is_topmost = (style & WS_EX_TOPMOST.0) != 0;
+        let insert_after = if is_topmost {
+            HWND_NOTOPMOST
+        } else {
+            HWND_TOPMOST
+        };
+        SetWindowPos(
+            hwnd,
+            insert_after,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        .context("failed to toggle topmost")?;
+        Ok(!is_topmost)
+    }
+}
+
+pub fn maximize_restore_hwnd(hwnd: String) -> anyhow::Result<()> {
+    let hwnd = parse_hwnd(&hwnd)?;
+    unsafe {
+        if IsZoomed(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+        }
+    }
+    Ok(())
+}
+
+unsafe extern "system" fn enum_monitor_cb(
+    hmonitor: HMONITOR,
+    _hdc: HDC,
+    _rect: *mut RECT,
+    lparam: LPARAM,
+) -> BOOL {
+    let monitors = &mut *(lparam.0 as *mut Vec<MONITORINFO>);
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMonitorInfoW(hmonitor, &mut info).as_bool() {
+        monitors.push(info);
+    }
+    BOOL(1)
+}
+
+/// 把窗口移动到下一个显示器(单屏时为空操作)。
+pub fn move_to_next_monitor_hwnd(hwnd: String) -> anyhow::Result<()> {
+    let hwnd = parse_hwnd(&hwnd)?;
+    unsafe {
+        let mut monitors: Vec<MONITORINFO> = Vec::new();
+        let enumerated = EnumDisplayMonitors(
+            HDC::default(),
+            None,
+            Some(enum_monitor_cb),
+            LPARAM(&mut monitors as *mut Vec<MONITORINFO> as isize),
+        );
+        if !enumerated.as_bool() {
+            return Err(anyhow!("EnumDisplayMonitors failed"));
+        }
+
+        if monitors.len() < 2 {
+            return Ok(());
+        }
+
+        let current = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut current_info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let _ = GetMonitorInfoW(current, &mut current_info);
+        let index = monitors
+            .iter()
+            .position(|info| info.rcMonitor == current_info.rcMonitor)
+            .unwrap_or(0);
+        let target = &monitors[(index + 1) % monitors.len()].rcMonitor;
+
+        let mut rect = RECT::default();
+        GetWindowRect(hwnd, &mut rect).context("failed to read window rect")?;
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+
+        // 最大化窗口会被系统钉在原屏,先还原再移动
+        if IsZoomed(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+
+        let x = target.left + ((target.right - target.left) - width) / 2;
+        let y = target.top + ((target.bottom - target.top) - height) / 2;
+        SetWindowPos(hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
+            .context("failed to move window to next monitor")?;
+    }
+    Ok(())
+}
+
+/// 对指定窗口立即重新截图(预览区伪实时),并同步更新缓存。
+pub fn recapture_thumbnail(hwnd: String) -> Option<String> {
+    let hwnd = parse_hwnd(&hwnd).ok()?;
+    let mut rect = RECT::default();
+    let title;
+    unsafe {
+        GetWindowRect(hwnd, &mut rect).ok()?;
+        title = get_window_title(hwnd).unwrap_or_default();
+    }
+    let thumbnail = unsafe { capture_window_thumbnail(hwnd) }.ok();
+
+    let mut cache = thumbnail_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.insert(
+        (hwnd.0 as isize).to_string(),
+        CachedThumbnail {
+            width: rect.right - rect.left,
+            height: rect.bottom - rect.top,
+            title,
+            thumbnail: thumbnail.clone(),
+        },
+    );
+    thumbnail
+}
+
 fn parse_hwnd(value: &str) -> anyhow::Result<HWND> {
     let parsed = value
         .parse::<isize>()
@@ -259,7 +390,7 @@ pub fn cover_monitor(window: &WebviewWindow) -> anyhow::Result<()> {
     let hwnd = HWND(hwnd.0 as *mut c_void);
 
     unsafe {
-        let mut info = match monitor_under_cursor() {
+        let info = match monitor_under_cursor() {
             Some(info) => info,
             None => {
                 let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);

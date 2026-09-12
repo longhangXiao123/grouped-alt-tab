@@ -75,12 +75,21 @@ export default function App() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [hotkeyCapturing, setHotkeyCapturing] = useState(false);
   const [hotkeyHint, setHotkeyHint] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; hwnd: string } | null>(null);
   const groupsRef = useRef<AppGroup[]>(emptyGroups);
   const selectedRef = useRef<Selection>({ group: 0, window: 0 });
   const sessionActiveRef = useRef(false);
   const lastCycleAtRef = useRef(0);
   const shellRef = useRef<HTMLElement | null>(null);
   const hotkeyCapturingRef = useRef(false);
+  const noticeTimerRef = useRef(0);
+
+  const showNotice = useCallback((text: string) => {
+    setNotice(text);
+    window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 1800);
+  }, []);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const detailRef = useRef<HTMLElement | null>(null);
@@ -235,43 +244,92 @@ export default function App() {
     await activateWindowByHwnd(activeWindow.hwnd);
   }, [activateWindowByHwnd, activeWindow]);
 
-  const closeSelected = useCallback(async () => {
-    const hwnd = activeWindow?.hwnd;
-    if (!hwnd) return;
-    try {
-      await invoke("close_window", { hwnd });
-      // 给目标应用一点时间处理关闭,再刷新列表
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [activeWindow, refresh]);
+  // 窗口管理动作统一按 hwnd 操作,键盘快捷键和右键菜单共用
+  const closeWindowByHwnd = useCallback(
+    async (hwnd: string) => {
+      try {
+        await invoke("close_window", { hwnd });
+        // 给目标应用一点时间处理关闭,再刷新列表
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [refresh]
+  );
 
-  const minimizeSelected = useCallback(async () => {
-    const hwnd = activeWindow?.hwnd;
-    if (!hwnd) return;
-    try {
-      await invoke("minimize_window", { hwnd });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [activeWindow, refresh]);
+  const minimizeWindowByHwnd = useCallback(
+    async (hwnd: string) => {
+      try {
+        await invoke("minimize_window", { hwnd });
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [refresh]
+  );
 
-  const closeGroupSelected = useCallback(async () => {
+  const maximizeRestoreByHwnd = useCallback(
+    async (hwnd: string) => {
+      try {
+        await invoke("maximize_restore_window", { hwnd });
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [refresh]
+  );
+
+  const toggleTopmostByHwnd = useCallback(
+    async (hwnd: string) => {
+      try {
+        const topmost = await invoke<boolean>("toggle_topmost", { hwnd });
+        showNotice(topmost ? "窗口已置顶" : "已取消置顶");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [showNotice]
+  );
+
+  const moveToNextMonitorByHwnd = useCallback(
+    async (hwnd: string) => {
+      try {
+        await invoke("move_window_to_next_monitor", { hwnd });
+        showNotice("已移动到下一个显示器");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [showNotice]
+  );
+
+  const closeSelected = useCallback(() => {
+    const hwnd = activeWindow?.hwnd;
+    if (hwnd) void closeWindowByHwnd(hwnd);
+  }, [activeWindow, closeWindowByHwnd]);
+
+  const minimizeSelected = useCallback(() => {
+    const hwnd = activeWindow?.hwnd;
+    if (hwnd) void minimizeWindowByHwnd(hwnd);
+  }, [activeWindow, minimizeWindowByHwnd]);
+
+  const closeGroupSelected = useCallback(() => {
     const group = activeGroup;
     if (!group) return;
-    try {
+    void (async () => {
       for (const win of group.windows) {
         await invoke("close_window", { hwnd: win.hwnd });
       }
       // 给目标应用处理关闭的时间,再刷新列表
       await new Promise((resolve) => setTimeout(resolve, 400));
       await refresh();
-    } catch (err) {
+    })().catch((err) => {
       setError(err instanceof Error ? err.message : String(err));
-    }
+    });
   }, [activeGroup, refresh]);
 
   const activateCurrentSelection = useCallback(async () => {
@@ -478,6 +536,24 @@ export default function App() {
         return;
       }
 
+      if (!isTyping && (event.key === "t" || event.key === "T") && activeWindow) {
+        event.preventDefault();
+        void toggleTopmostByHwnd(activeWindow.hwnd);
+        return;
+      }
+
+      if (!isTyping && (event.key === "x" || event.key === "X") && activeWindow) {
+        event.preventDefault();
+        void maximizeRestoreByHwnd(activeWindow.hwnd);
+        return;
+      }
+
+      if (!isTyping && event.ctrlKey && event.key === "ArrowRight" && activeWindow) {
+        event.preventDefault();
+        void moveToNextMonitorByHwnd(activeWindow.hwnd);
+        return;
+      }
+
       if (event.key === "ArrowDown") {
         event.preventDefault();
         if (!activeGroup) return;
@@ -498,7 +574,7 @@ export default function App() {
         return;
       }
 
-      if (event.key === "ArrowRight" || event.key === "Tab") {
+      if ((event.key === "ArrowRight" || event.key === "Tab") && !event.ctrlKey) {
         event.preventDefault();
         applySelection({
           group: filteredGroups.length === 0 ? 0 : Math.min(selectedRef.current.group + 1, filteredGroups.length - 1),
@@ -520,7 +596,40 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handler);
     };
-  }, [activateSelected, activeGroup, applySelection, closeGroupSelected, closeSelected, filteredGroups.length, minimizeSelected]);
+  }, [
+    activateSelected,
+    activeGroup,
+    activeWindow,
+    applySelection,
+    closeGroupSelected,
+    closeSelected,
+    filteredGroups.length,
+    maximizeRestoreByHwnd,
+    minimizeSelected,
+    moveToNextMonitorByHwnd,
+    toggleTopmostByHwnd
+  ]);
+
+  // 右键菜单:点击别处或 Esc 时关闭(Esc 在捕获阶段拦截,避免同时隐藏切换器)
+  useEffect(() => {
+    if (!rowMenu) {
+      return;
+    }
+    const close = () => setRowMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setRowMenu(null);
+      }
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [rowMenu]);
 
   // 滚轮切换:侧栏滚 = 换分组,详情区滚 = 换窗口(方向键的鼠标版)
   useEffect(() => {
@@ -584,6 +693,37 @@ export default function App() {
     }
   }, [settingsOpen]);
 
+  // 预览伪实时:选中窗口稳定 120ms 后单独重截它的缩略图,大图区永远是最新内容
+  const previewHwnd = activeWindow?.hwnd ?? null;
+  useEffect(() => {
+    if (!previewHwnd) {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void invoke<string | null>("recapture_window_thumbnail", { hwnd: previewHwnd })
+        .then((fresh) => {
+          if (cancelled || !fresh) {
+            return;
+          }
+          const mutate = (groups: AppGroup[]) =>
+            groups.map((group) => ({
+              ...group,
+              windows: group.windows.map((win) =>
+                win.hwnd === previewHwnd ? { ...win, thumbnail: fresh } : win
+              ),
+            }));
+          groupsRef.current = mutate(groupsRef.current);
+          setGroups(mutate);
+        })
+        .catch(() => {});
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [previewHwnd]);
+
   return (
     <main className="shell" ref={shellRef}>
       <header className="toolbar">
@@ -618,6 +758,7 @@ export default function App() {
       </header>
 
       {error ? <div className="error">{error}</div> : null}
+      {notice ? <div className="notice">{notice}</div> : null}
 
       {settingsOpen ? (
         <section className="settings-panel" aria-label="Settings">
@@ -771,6 +912,11 @@ export default function App() {
                     type="button"
                     onMouseEnter={() => applySelection({ group: selectedGroup, window: windowIndex })}
                     onClick={() => void activateWindowByHwnd(window.hwnd)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      applySelection({ group: selectedGroup, window: windowIndex });
+                      setRowMenu({ x: event.clientX, y: event.clientY, hwnd: window.hwnd });
+                    }}
                   >
                     {window.thumbnail ? (
                       <img className="window-preview" src={window.thumbnail} alt="" />
@@ -795,9 +941,12 @@ export default function App() {
               </div>
               <div className="shortcut-hints">
                 <span>Enter 切换</span>
-                <span>W 关闭窗口</span>
-                <span>Shift+W 关闭整组</span>
+                <span>W 关闭</span>
+                <span>Shift+W 关整组</span>
                 <span>M 最小化</span>
+                <span>X 最大化</span>
+                <span>T 置顶</span>
+                <span>Ctrl+→ 移屏</span>
                 <span>Esc 退出</span>
               </div>
             </>
@@ -809,6 +958,62 @@ export default function App() {
           )}
         </section>
       </section>
+      {rowMenu ? (
+        <div
+          className="row-menu"
+          style={{
+            left: Math.min(rowMenu.x, window.innerWidth - 190),
+            top: Math.min(rowMenu.y, window.innerHeight - 170)
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              void maximizeRestoreByHwnd(rowMenu.hwnd);
+              setRowMenu(null);
+            }}
+          >
+            最大化 / 还原
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void minimizeWindowByHwnd(rowMenu.hwnd);
+              setRowMenu(null);
+            }}
+          >
+            最小化
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void toggleTopmostByHwnd(rowMenu.hwnd);
+              setRowMenu(null);
+            }}
+          >
+            置顶 / 取消置顶
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void moveToNextMonitorByHwnd(rowMenu.hwnd);
+              setRowMenu(null);
+            }}
+          >
+            移动到下一显示器
+          </button>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              void closeWindowByHwnd(rowMenu.hwnd);
+              setRowMenu(null);
+            }}
+          >
+            关闭窗口
+          </button>
+        </div>
+      ) : null}
     </main>
   );
 }

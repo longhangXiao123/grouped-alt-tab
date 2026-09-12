@@ -14,7 +14,10 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use window_manager::{activate_hwnd, close_hwnd, cover_monitor, list_groups, minimize_hwnd, AppGroup};
+use window_manager::{
+    activate_hwnd, close_hwnd, cover_monitor, list_groups, maximize_restore_hwnd,
+    minimize_hwnd, move_to_next_monitor_hwnd, recapture_thumbnail, toggle_topmost_hwnd, AppGroup,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
 
 #[derive(Debug, thiserror::Error)]
@@ -131,6 +134,26 @@ fn close_window(hwnd: String) -> AppResult<()> {
 #[tauri::command]
 fn minimize_window(hwnd: String) -> AppResult<()> {
     minimize_hwnd(hwnd).map_err(AppError::from)
+}
+
+#[tauri::command]
+fn toggle_topmost(hwnd: String) -> AppResult<bool> {
+    toggle_topmost_hwnd(hwnd).map_err(AppError::from)
+}
+
+#[tauri::command]
+fn maximize_restore_window(hwnd: String) -> AppResult<()> {
+    maximize_restore_hwnd(hwnd).map_err(AppError::from)
+}
+
+#[tauri::command]
+fn move_window_to_next_monitor(hwnd: String) -> AppResult<()> {
+    move_to_next_monitor_hwnd(hwnd).map_err(AppError::from)
+}
+
+#[tauri::command]
+fn recapture_window_thumbnail(hwnd: String) -> AppResult<Option<String>> {
+    Ok(recapture_thumbnail(hwnd))
 }
 
 /// 用户按 Esc 取消切换时调用:停掉自动循环和 Alt 监视,避免松开 Alt 时误提交。
@@ -368,6 +391,10 @@ pub fn run() {
             activate_window,
             close_window,
             minimize_window,
+            toggle_topmost,
+            maximize_restore_window,
+            move_window_to_next_monitor,
+            recapture_window_thumbnail,
             get_settings,
             update_settings,
             apply_switcher_window_bounds,

@@ -147,12 +147,60 @@ input {
 }
 
 .error {
-  margin: 12px 16px 0;
-  padding: 10px 13px;
+  margin: 10px 14px 0;
+  padding: 9px 11px;
   border: 1px solid rgba(251, 113, 133, 0.45);
   border-radius: 14px;
   color: #fecdd3;
   background: rgba(127, 29, 29, 0.32);
+}
+
+.notice {
+  margin: 10px 14px 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(150, 205, 255, 0.4);
+  border-radius: 14px;
+  color: #cfe6ff;
+  background: rgba(70, 150, 235, 0.2);
+}
+
+.row-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 168px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: linear-gradient(168deg, rgba(30, 40, 52, 0.92), rgba(18, 26, 36, 0.94));
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+
+.row-menu button {
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 10px;
+  text-align: left;
+  color: #eaf2f8;
+  background: transparent;
+  cursor: pointer;
+}
+
+.row-menu button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.row-menu button.danger {
+  color: #fecdd3;
+}
+
+.row-menu button.danger:hover {
+  background: rgba(251, 113, 133, 0.16);
 }
 
 .settings-panel {

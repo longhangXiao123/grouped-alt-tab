@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: grouped-alt-tab/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: grouped-alt-tab/src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install
+        working-directory: grouped-alt-tab
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: grouped-alt-tab
+          tagName: ${{ github.ref_name }}
+          releaseName: "Grouped Alt-Tab ${{ github.ref_name }}"
+          releaseBody: "下载 Assets 中的安装包(NSIS 安装向导或 MSI)。"
+          releaseDraft: false
+          prerelease: false

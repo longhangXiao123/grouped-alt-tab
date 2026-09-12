@@ -8,7 +8,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 use tauri::{AppHandle, Manager, WebviewWindow};
-use windows::core::PCWSTR;
+use windows::core::{GUID, PCWSTR};
 use windows::Win32::{
     Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH, POINT, RECT, WPARAM},
     Graphics::Gdi::{
@@ -21,10 +21,13 @@ use windows::Win32::{
     Storage::FileSystem::FILE_ATTRIBUTE_NORMAL,
     Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
     System::{
+        Com::{CoCreateInstance, CoIncrementMTAUsage, CLSCTX_ALL},
         ProcessStatus::K32GetModuleFileNameExW,
         Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ},
     },
-    UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON},
+    UI::Shell::{
+        IVirtualDesktopManager, SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON,
+    },
     UI::WindowsAndMessaging::{
         DestroyIcon, EnumWindows, GetAncestor, GetCursorPos, GetIconInfo, GetLastActivePopup,
         GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
@@ -46,6 +49,7 @@ pub struct WindowInfo {
     pub icon: Option<String>,
     pub thumbnail: Option<String>,
     pub is_minimized: bool,
+    pub is_on_current_desktop: bool,
     pub last_active_rank: usize,
 }
 
@@ -63,6 +67,46 @@ struct EnumContext {
     windows: Vec<WindowInfo>,
     self_pid: u32,
     excluded_processes: Vec<String>,
+    show_current_desktop_only: bool,
+    desktop_manager: Option<IVirtualDesktopManager>,
+}
+
+// IVirtualDesktopManager 的文档 CLSID。部分新构建(26200+)的类和接口有变动:
+// 旧 CLSID 未注册、新 CLSID 的接口布局不兼容(调用会 AV),因此只走文档 CLSID,
+// 不可用时优雅降级为"不过滤"。
+const CLSID_VIRTUAL_DESKTOP_MANAGER: GUID =
+    GUID::from_u128(0xaa509086_5ca9_4c25_8f95_589d3c07b0f8);
+
+/// 进程内递增一次 MTA 引用,之后任意线程都能使用 COM 服务器对象。
+/// cookie 存成 usize 规避 Send/Sync,MTA 随进程存活,不需要归还。
+fn mta_cookie() -> Option<usize> {
+    static COOKIE: OnceLock<Option<usize>> = OnceLock::new();
+    *COOKIE.get_or_init(|| unsafe { CoIncrementMTAUsage().ok().map(|cookie| cookie.0 as usize) })
+}
+
+pub unsafe fn virtual_desktop_manager() -> Option<IVirtualDesktopManager> {
+    mta_cookie()?;
+    match CoCreateInstance(&CLSID_VIRTUAL_DESKTOP_MANAGER, None, CLSCTX_ALL) {
+        Ok(manager) => Some(manager),
+        Err(_) => {
+            eprintln!("virtual desktop manager COM class unavailable; desktop filter disabled");
+            None
+        }
+    }
+}
+
+/// 窗口是否在当前虚拟桌面;接口不可用或查询失败一律按"在"处理,不影响原行为。
+pub unsafe fn is_on_current_desktop(
+    manager: Option<&IVirtualDesktopManager>,
+    hwnd: HWND,
+) -> bool {
+    let Some(manager) = manager else {
+        return true;
+    };
+    manager
+        .IsWindowOnCurrentVirtualDesktop(hwnd)
+        .map(|on| on.as_bool())
+        .unwrap_or(true)
 }
 
 /// 缩略图脏缓存:窗口尺寸和标题都没变时复用上次截图,
@@ -128,6 +172,8 @@ pub fn list_groups(app: &AppHandle) -> anyhow::Result<Vec<AppGroup>> {
             .iter()
             .map(|item| item.to_ascii_lowercase())
             .collect(),
+        show_current_desktop_only: settings.show_current_desktop_only,
+        desktop_manager: unsafe { virtual_desktop_manager() },
     };
 
     unsafe {
@@ -453,6 +499,12 @@ unsafe fn inspect_window(hwnd: HWND, ctx: &EnumContext) -> Option<WindowInfo> {
         return None;
     }
 
+    // 虚拟桌面:开启过滤时跳过其他桌面的窗口;关掉时保留并打上角标
+    let on_current_desktop = is_on_current_desktop(ctx.desktop_manager.as_ref(), hwnd);
+    if ctx.show_current_desktop_only && !on_current_desktop {
+        return None;
+    }
+
     let thumbnail = cached_thumbnail(hwnd, &title);
     Some(WindowInfo {
         hwnd: (hwnd.0 as isize).to_string(),
@@ -463,6 +515,7 @@ unsafe fn inspect_window(hwnd: HWND, ctx: &EnumContext) -> Option<WindowInfo> {
         icon: None,
         thumbnail,
         is_minimized: IsIconic(hwnd).as_bool(),
+        is_on_current_desktop: on_current_desktop,
         last_active_rank: ctx.windows.len(),
     })
 }
@@ -794,6 +847,7 @@ mod tests {
             icon: None,
             thumbnail: None,
             is_minimized: false,
+            is_on_current_desktop: true,
             last_active_rank: 0,
         }
     }

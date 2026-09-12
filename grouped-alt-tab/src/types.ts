@@ -7,6 +7,7 @@ export type WindowInfo = {
   icon: string | null;
   thumbnail: string | null;
   is_minimized: boolean;
+  is_on_current_desktop: boolean;
   last_active_rank: number;
 };
 
@@ -27,5 +28,6 @@ export type SwitcherSettings = {
   window_width: number;
   window_height: number;
   auto_start: boolean;
+  show_current_desktop_only: boolean;
   excluded_processes: string[];
 };

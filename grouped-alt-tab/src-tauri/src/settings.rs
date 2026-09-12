@@ -20,6 +20,8 @@ pub struct SwitcherSettings {
     pub window_height: u32,
     #[serde(default)]
     pub auto_start: bool,
+    #[serde(default = "default_show_current_desktop_only")]
+    pub show_current_desktop_only: bool,
     pub excluded_processes: Vec<String>,
 }
 
@@ -35,6 +37,10 @@ fn default_window_height() -> u32 {
     720
 }
 
+fn default_show_current_desktop_only() -> bool {
+    true
+}
+
 impl Default for SwitcherSettings {
     fn default() -> Self {
         Self {
@@ -45,6 +51,7 @@ impl Default for SwitcherSettings {
             window_width: default_window_width(),
             window_height: default_window_height(),
             auto_start: false,
+            show_current_desktop_only: true,
             excluded_processes: vec![
                 "grouped-alt-tab.exe".to_string(),
                 "ApplicationFrameHost.exe".to_string(),
@@ -136,6 +143,7 @@ mod tests {
         assert_eq!(settings.window_width, 1280);
         assert_eq!(settings.window_height, 720);
         assert!(!settings.auto_start);
+        assert!(settings.show_current_desktop_only);
         assert!(settings
             .excluded_processes
             .contains(&"grouped-alt-tab.exe".to_string()));

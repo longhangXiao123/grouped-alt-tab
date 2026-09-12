@@ -15,6 +15,7 @@ const defaultSettings: SwitcherSettings = {
   window_width: 1280,
   window_height: 720,
   auto_start: false,
+  show_current_desktop_only: true,
   excluded_processes: ["grouped-alt-tab.exe", "ApplicationFrameHost.exe"]
 };
 
@@ -851,6 +852,20 @@ export default function App() {
             />
           </label>
 
+          <label className="toggle-field">
+            <span>只显示当前桌面</span>
+            <input
+              type="checkbox"
+              checked={settings.show_current_desktop_only}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  show_current_desktop_only: event.target.checked
+                }))
+              }
+            />
+          </label>
+
           <button className="save-button" type="button" onClick={() => void saveSettings()} disabled={savingSettings}>
             <Save size={16} />
             <span>{savingSettings ? "保存中" : "保存"}</span>
@@ -934,6 +949,7 @@ export default function App() {
                       <span className="window-meta">
                         PID {window.pid}
                         {window.is_minimized ? " · minimized" : ""}
+                        {!window.is_on_current_desktop ? " · 其他桌面" : ""}
                       </span>
                     </div>
                   </button>

@@ -82,6 +82,8 @@ export default function App() {
   const shellRef = useRef<HTMLElement | null>(null);
   const hotkeyCapturingRef = useRef(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const detailRef = useRef<HTMLElement | null>(null);
 
   // 弹出时把焦点从搜索框挪走,让 W/M 管理键随时可用;想过滤时点击搜索框即可
   const blurSearch = useCallback(() => {
@@ -130,6 +132,31 @@ export default function App() {
       group: (current.group + 1) % nextGroups.length,
       window: 0
     };
+  }, [clampSelection]);
+
+  const prevSelection = useCallback((nextGroups: AppGroup[], selection: Selection) => {
+    if (nextGroups.length === 0) {
+      return { group: 0, window: 0 };
+    }
+
+    const current = clampSelection(nextGroups, selection);
+    if (current.window > 0) {
+      return { group: current.group, window: current.window - 1 };
+    }
+
+    const group = (current.group - 1 + nextGroups.length) % nextGroups.length;
+    const lastWindow = Math.max(nextGroups[group].windows.length - 1, 0);
+    return { group, window: lastWindow };
+  }, [clampSelection]);
+
+  const prevGroupSelection = useCallback((nextGroups: AppGroup[], selection: Selection) => {
+    if (nextGroups.length === 0) {
+      return { group: 0, window: 0 };
+    }
+
+    const current = clampSelection(nextGroups, selection);
+    const group = (current.group - 1 + nextGroups.length) % nextGroups.length;
+    return { group, window: 0 };
   }, [clampSelection]);
 
   const filteredGroups = useMemo(() => {
@@ -232,6 +259,21 @@ export default function App() {
     }
   }, [activeWindow, refresh]);
 
+  const closeGroupSelected = useCallback(async () => {
+    const group = activeGroup;
+    if (!group) return;
+    try {
+      for (const win of group.windows) {
+        await invoke("close_window", { hwnd: win.hwnd });
+      }
+      // 给目标应用处理关闭的时间,再刷新列表
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [activeGroup, refresh]);
+
   const activateCurrentSelection = useCallback(async () => {
     const selection = selectedRef.current;
     const hwnd = groupsRef.current[selection.group]?.windows[selection.window]?.hwnd;
@@ -239,7 +281,7 @@ export default function App() {
     await activateWindowByHwnd(hwnd);
   }, [activateWindowByHwnd]);
 
-  const cycleSelection = useCallback(async (forceRefresh: boolean) => {
+  const cycleSelection = useCallback(async () => {
     const now = performance.now();
     if (now - lastCycleAtRef.current < 80) {
       return;
@@ -249,12 +291,9 @@ export default function App() {
     setError(null);
 
     try {
-      let nextGroups = groupsRef.current;
-      if (forceRefresh || nextGroups.length === 0) {
-        setLoading(true);
-        nextGroups = await invoke<AppGroup[]>("list_window_groups");
-        applyGroups(nextGroups);
-      }
+      // 缩略图缓存命中后整次枚举只要几毫秒,每次唤出都拿最新窗口列表
+      let nextGroups = await invoke<AppGroup[]>("list_window_groups");
+      applyGroups(nextGroups);
 
       applySelection(nextSelection(nextGroups, selectedRef.current));
       await getCurrentWindow().show();
@@ -269,7 +308,7 @@ export default function App() {
     }
   }, [applyGroups, applySelection, blurSearch, nextSelection, playEntrance]);
 
-  const cycleGroupSelection = useCallback(async (forceRefresh: boolean) => {
+  const cycleGroupSelection = useCallback(async () => {
     const now = performance.now();
     if (now - lastCycleAtRef.current < 80) {
       return;
@@ -279,12 +318,8 @@ export default function App() {
     setError(null);
 
     try {
-      let nextGroups = groupsRef.current;
-      if (forceRefresh || nextGroups.length === 0) {
-        setLoading(true);
-        nextGroups = await invoke<AppGroup[]>("list_window_groups");
-        applyGroups(nextGroups);
-      }
+      let nextGroups = await invoke<AppGroup[]>("list_window_groups");
+      applyGroups(nextGroups);
 
       applySelection(nextGroupSelection(nextGroups, selectedRef.current));
       await getCurrentWindow().show();
@@ -336,11 +371,11 @@ export default function App() {
     });
 
     const unlistenCycle = listen("switcher:cycle", () => {
-      void cycleSelection(groupsRef.current.length === 0);
+      void cycleSelection();
     });
 
     const unlistenGroupCycle = listen("switcher:group-cycle", () => {
-      void cycleGroupSelection(groupsRef.current.length === 0);
+      void cycleGroupSelection();
     });
 
     const unlistenCommit = listen("switcher:commit", () => {
@@ -429,7 +464,11 @@ export default function App() {
 
       if (!isTyping && (event.key === "w" || event.key === "W")) {
         event.preventDefault();
-        void closeSelected();
+        if (event.shiftKey) {
+          void closeGroupSelected();
+        } else {
+          void closeSelected();
+        }
         return;
       }
 
@@ -481,7 +520,55 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handler);
     };
-  }, [activateSelected, activeGroup, applySelection, closeSelected, filteredGroups.length, minimizeSelected]);
+  }, [activateSelected, activeGroup, applySelection, closeGroupSelected, closeSelected, filteredGroups.length, minimizeSelected]);
+
+  // 滚轮切换:侧栏滚 = 换分组,详情区滚 = 换窗口(方向键的鼠标版)
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    const detail = detailRef.current;
+    if (!sidebar || !detail) {
+      return;
+    }
+
+    let lastAt = 0;
+    const make = (pick: (dir: number) => void) => (event: WheelEvent) => {
+      event.preventDefault();
+      const now = performance.now();
+      if (now - lastAt < 70) {
+        return;
+      }
+      lastAt = now;
+      pick(event.deltaY > 0 ? 1 : -1);
+    };
+
+    const onSidebar = make((dir) => {
+      if (filteredGroups.length === 0) {
+        return;
+      }
+      applySelection(
+        dir > 0
+          ? nextGroupSelection(filteredGroups, selectedRef.current)
+          : prevGroupSelection(filteredGroups, selectedRef.current)
+      );
+    });
+    const onDetail = make((dir) => {
+      if (filteredGroups.length === 0) {
+        return;
+      }
+      applySelection(
+        dir > 0
+          ? nextSelection(filteredGroups, selectedRef.current)
+          : prevSelection(filteredGroups, selectedRef.current)
+      );
+    });
+
+    sidebar.addEventListener("wheel", onSidebar, { passive: false });
+    detail.addEventListener("wheel", onDetail, { passive: false });
+    return () => {
+      sidebar.removeEventListener("wheel", onSidebar);
+      detail.removeEventListener("wheel", onDetail);
+    };
+  }, [applySelection, filteredGroups, nextGroupSelection, nextSelection, prevGroupSelection, prevSelection]);
 
   useEffect(() => {
     if (selectedGroup >= filteredGroups.length) {
@@ -631,7 +718,7 @@ export default function App() {
       ) : null}
 
       <section className="content">
-        <aside className="groups" aria-label="Application groups">
+        <aside className="groups" ref={sidebarRef} aria-label="Application groups">
           {filteredGroups.map((group, groupIndex) => (
             <button
               key={group.group_id}
@@ -654,7 +741,7 @@ export default function App() {
           ))}
         </aside>
 
-        <section className="windows" aria-label="Windows">
+        <section className="windows" ref={detailRef} aria-label="Windows">
           {activeGroup ? (
             <>
               <div className="active-heading">
@@ -709,6 +796,7 @@ export default function App() {
               <div className="shortcut-hints">
                 <span>Enter 切换</span>
                 <span>W 关闭窗口</span>
+                <span>Shift+W 关闭整组</span>
                 <span>M 最小化</span>
                 <span>Esc 退出</span>
               </div>

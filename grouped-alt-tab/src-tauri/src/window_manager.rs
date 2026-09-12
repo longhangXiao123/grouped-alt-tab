@@ -89,7 +89,10 @@ pub unsafe fn virtual_desktop_manager() -> Option<IVirtualDesktopManager> {
     match CoCreateInstance(&CLSID_VIRTUAL_DESKTOP_MANAGER, None, CLSCTX_ALL) {
         Ok(manager) => Some(manager),
         Err(_) => {
-            eprintln!("virtual desktop manager COM class unavailable; desktop filter disabled");
+            static LOGGED: OnceLock<()> = OnceLock::new();
+            if LOGGED.set(()).is_ok() {
+                eprintln!("virtual desktop manager COM class unavailable; desktop filter disabled");
+            }
             None
         }
     }
